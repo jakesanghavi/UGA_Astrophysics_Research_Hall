@@ -1,0 +1,6 @@
+# Ignore things created by Python/exoplasim which we don't want to be committing to GitHub.
+# Ignore any folder named "earth" anywhere
+**/earth/
+
+# Ignore any folder named "__pycache__" anywhere
+**/__pycache__/

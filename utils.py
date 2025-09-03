@@ -1,0 +1,274 @@
+import numpy as np
+from astropy.constants import L_sun, sigma_sb, h, c, k_B, N_A
+from astropy import units as u
+from scipy.integrate import quad
+
+def calculate_max_photosynthesis_rate_no_resp():
+    """
+    Calculate the maximum photosynthesis rate in units
+    mu mol photons m^(-2) s^(-1) based on parameter
+    estimates found in the paper.
+    Parameters
+    ----------
+    None
+    
+    Returns
+    float : the max. rate
+    """
+    alpha = 1 * 10 ** (-5)
+    beta = 1 * 10 ** (-3)
+    gamma = 2.0
+    
+    return 1/(beta+2*(alpha*gamma)**(1/2))
+
+def calculate_resp(conditions="ideal"):
+    """
+    Calculate the dark respiration rate in units
+    mu mol photons m^(-2) s^(-1) as a fraction of
+    the max. photosynthesis rate.
+    Parameters
+    ----------
+    conditions: String
+        One of ['ideal', 'optimistic', 'pessimistic']
+    
+    Returns
+    float : the dark respiration rate
+    """
+    
+    if conditions == 'paper':
+        return 20.0
+    
+    max_no_resp = calculate_max_photosynthesis_rate_no_resp()
+    
+    rate_fractions = {
+        "ideal": 0.3,
+        "optimistic": 0.6,
+        "pessimistic": 0.8
+    }
+    
+    return max_no_resp * rate_fractions[conditions]
+
+def calculate_photosynthesis_rate(I, conditions="ideal"):
+    """
+    Calculate the photosynthesis rate in units
+    mu mol photons m^(-2) s^(-1).
+    Parameters
+    ----------
+    I : float
+        The Irradiance intensity in units W m^(-2)
+    conditions : String
+        One of ['ideal', 'optimistic', 'pessimistic']
+    
+    Returns
+    float : the photosynthesis rate
+    """
+    # I_val = I.to_value(u.W / u.m**2)
+    I_val = I
+    alpha = 1 * 10 ** (-5)
+    beta = 1 * 10 ** (-3)
+    gamma = 2.0
+    
+    resp = calculate_resp(conditions)
+    
+    return I_val / (alpha * I_val ** 2 + beta * I_val + gamma) - resp
+
+# NOT CURRENTLY BEING USED
+# REPLACED BY EXOPLASIM
+def calculate_T_equilibrium(L, a):
+    """
+    Calculate the equilibrium temperature of a planet based on 
+    equation 9 in the paper.
+    Parameters
+    ----------
+    L : float
+        The luminosity of the parent star in units W
+    a: float
+        The semi-major axis of the orbit around the parent star
+        in units m
+    
+    Returns
+    float : the equilibrium temperature of the planet in units K
+    """
+    A_bond = 0.306
+    numerator = L * (1-A_bond)
+    denominator = 16 * sigma_sb * np.pi * a ** 2
+    return (numerator/denominator) ** (1/4)
+
+# NOT CURRENTLY IMPLEMENTED
+# ALWAYS RETURNS 0
+def calculate_delta_T_greenhouse():
+    """
+    Calculate the impact of greenhouse effects on 
+    the temperature of the planet of interest.
+    Parameters
+    ----------
+    None
+    
+    Returns
+    float : the temperature impact
+    """
+    return 0 * u.K
+
+# NOT CURRENTLY BEING USED
+def calculate_f_temp(L, a):
+    """
+    Calculate the f_temp.
+    Parameters
+    ----------
+    L : float
+        The luminosity of the parent star in units W
+    a: float
+        The semi-major axis of the orbit around the parent star
+        in units m
+    
+    Returns
+    float : the f_temp in units K
+    """
+    T_eq = calculate_T_equilibrium(L, a)
+    delta_T_greenhouse = calculate_delta_T_greenhouse()
+    T = T_eq + delta_T_greenhouse
+        
+    T_opt = (35 * u.deg_C).to(u.K, equivalencies=u.temperature())
+    T_max = (73 * u.deg_C).to(u.K, equivalencies=u.temperature())
+    
+    term1 = ((T_max - T)/(T_max - T_opt))
+    term2 = (T/T_opt)
+        
+    return (term1 * term2) ** (T_opt/(T_max-T_opt))
+
+def calculate_f_temp_given_T(T):
+    """
+    Calculate the f_temp given a surface temperature.
+    These surface temperatures will be provided by exoplasim
+    Parameters
+    ----------
+    T: float
+        the surface temperature in units K
+    
+    Returns
+    float : the f_temp in units K
+    """
+    T = T * u.K
+    T = T + calculate_delta_T_greenhouse()
+
+    T = T.to(u.deg_C, equivalencies=u.temperature())
+    T_opt = 35 * u.deg_C
+    T_max = 73 * u.deg_C
+    
+    term1 = ((T_max - T)/(T_max - T_opt))
+    term2 = (T/T_opt)
+    base = term1 * term2
+    
+    # Avoid NaN problems
+    base = np.clip(base, 0, None)
+    
+    output = base ** (T_opt/(T_max-T_opt))
+    return output
+
+def calculate_P_curve(I, T, conditions="ideal"):
+    """
+    Calculate the photosynthesis rate of a planet
+    given both irradiance intensity data and 
+    temperature data.
+    Parameters
+    ----------
+    I : float
+        The Irradiance intensity in units W m^(-2)
+    T: float
+        The surface temperature of the planet in units K
+    conditions: String
+        One of ['ideal', 'optimistic', 'pessimistic'] 
+    
+    Returns
+    float : the photosynthesis rate
+    """
+    f_temp = calculate_f_temp_given_T(T)
+    return f_temp * calculate_photosynthesis_rate(I, conditions=conditions)
+
+def par_integral(lam, T_star):
+    """
+    Calculate the photon radiance of a star at a given wavelength.
+    This will be used to integrate over a range of wavelengths
+    Parameters
+    ----------
+    lam : float
+        Wavelength in meters
+    T_star : float
+        Temperature of the star in Kelvin
+    
+    Returns
+    -------
+    float : Photon flux density at the given wavelength
+    """
+    numerator = (2 * c.value / lam**4)
+    denominator = (np.exp(h.value * c.value / (lam * k_B.value * T_star.value)) - 1)
+    return numerator/denominator
+
+def photon_flux_star(T_star, R_star):
+    """
+    Integrate the photon radiance of a star
+    across the photosynthetically active radiation (PAR)
+    wavelength range to calculate the total photon flux
+    emitted by the star.
+
+    Parameters
+    ----------
+    T_star : float
+        Temperature of the star in Kelvin
+    R_star : float
+        Radius of the star in meters
+
+    Returns
+    -------
+    float : Total photon flux emitted by the star in the PAR range
+    """
+    lambda_min = 400 * 10 ** (-9)
+    lambda_max = 700 * 10 ** (-9)
+    integral, _ = quad(par_integral, lambda_min, lambda_max, args=(T_star,), limit=200)
+    return 4 * np.pi * R_star**2 * integral
+
+def photon_flux_at_planet(T_star, R_star, a):
+    """
+    Calculate the photon flux received by a planet
+    from its parent star at orbital distance a.
+    (Only over the PAR wavelengths)
+
+    Parameters
+    ----------
+    T_star : float
+        Temperature of the star in Kelvin
+    R_star : float
+        Radius of the star in meters
+    a : float
+        Orbital semi-major axis (distance from the star) in meters
+
+    Returns
+    -------
+    float : Photon flux at the planet’s orbit in the PAR range
+    """
+    n_dot = photon_flux_star(T_star, R_star)
+    return n_dot / (4 * np.pi * a**2)
+
+def calculate_intensity(T_star, R_star, a, f_a=1.0):
+    """
+    Calculate the photosynthesically active radiation (PAR)
+    for a planet, given the parameters of itself and 
+    its parent star.
+    Parameters
+    ----------
+    T_star : float
+        The temperature of the parent star in units K
+    R_star: float
+        The radius of the parent star in units m
+    a: float
+        The semi-major axis of orbit in units m
+    f_atm: float
+        The atmospheric attenuation on the planet
+    
+    Returns
+    float : the intensity, corrected by atmospheric
+            attenuation
+    """
+    conversion_factor = 1e6 / N_A.value
+    flux = photon_flux_at_planet(T_star, R_star, a)
+    return f_a * flux * conversion_factor
