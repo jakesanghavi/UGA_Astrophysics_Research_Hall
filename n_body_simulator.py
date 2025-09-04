@@ -1,9 +1,9 @@
 import time
-from M_Body_Simulator.ParFile import ParFile
-from M_Body_Simulator.System import System
-from M_Body_Simulator.Star import Star
-from M_Body_Simulator.Planet import Planet
-from M_Body_Simulator.PlanetSurface import PlanetSurface
+from N_Body_Simulator.ParFile import ParFile
+from N_Body_Simulator.System import System
+from N_Body_Simulator.Star import Star
+from N_Body_Simulator.Planet import Planet
+from N_Body_Simulator.PlanetSurface import PlanetSurface
 from constants import Gsi as G, twopi
 import sys
 

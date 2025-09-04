@@ -1,5 +1,5 @@
 import numpy as np
-from M_Body_Simulator.Body import Body
+from N_Body_Simulator.Body import Body
 from constants import twopi, pi, fluxsol
 
 # Class for a planetary surface body type

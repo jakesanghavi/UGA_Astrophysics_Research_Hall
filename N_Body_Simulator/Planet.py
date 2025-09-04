@@ -1,4 +1,4 @@
-from M_Body_Simulator.Body import Body
+from N_Body_Simulator.Body import Body
 from astropy.constants import sigma_sb, L_sun
 import numpy as np
 from astropy import units as u

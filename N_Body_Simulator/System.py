@@ -1,6 +1,6 @@
 import numpy as np
 
-# M-Body System on which our simulation will run
+# N-Body System on which our simulation will run
 class System:
     def __init__(self, name="System", bodyarray=None):
         # Included bodies information

@@ -1,7 +1,7 @@
 import math
 import numpy as np
 from astropy import constants as const  # Using astropy constants
-from M_Body_Simulator.Body import Body  # assumes Body is in body.py
+from N_Body_Simulator.Body import Body  # assumes Body is in body.py
 
 # Use unitless astropy constants
 pi = math.pi

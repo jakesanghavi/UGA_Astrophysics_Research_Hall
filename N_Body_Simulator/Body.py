@@ -257,7 +257,7 @@ class Body:
         self.position = self.position - framepos
         self.velocity = self.velocity - framevel
 
-    # M-Body dynamics methods
+    # N-Body dynamics methods
     def calcTimestep(self, greekEta):
         tol = 1e-20
         normA = np.linalg.norm(self.acceleration)
