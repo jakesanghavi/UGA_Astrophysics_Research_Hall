@@ -1,0 +1,39 @@
+-- Global parameters
+SystemName MySystem
+Output_Dir ./output
+Integrator RK4
+Restart False
+PlanetaryIllumination False
+FullOutput True
+ParType Positional
+NBodyOutput nbody.txt
+
+-- Integer parameters
+Number_Bodies 2
+NLatitude 10
+NLongitude 20
+NLambda 30
+SomeInt 5
+
+-- Double parameters
+SystemTime 0.0
+MaximumTime 1.0e6
+SnapshotTime 1.0e4
+TimeStep 10.0
+SomeDouble 3.14
+
+-- Body 0
+BodyName Sun
+BodyType Star
+Mass 1.0
+Radius 1.0
+Position 0.0 0.0 0.0
+Velocity 0.0 0.0 0.0
+
+-- Body 1
+BodyName Earth
+BodyType Planet
+Mass 3.0e-6
+Radius 0.0091577
+Position 1.0 0.0 0.0
+Velocity 0.0 6.283 0.0

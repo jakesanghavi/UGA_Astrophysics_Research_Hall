@@ -272,3 +272,63 @@ def calculate_intensity(T_star, R_star, a, f_a=1.0):
     conversion_factor = 1e6 / N_A.value
     flux = photon_flux_at_planet(T_star, R_star, a)
     return f_a * flux * conversion_factor
+
+def orbital_elements_to_state_vectors(
+    semimaj, ecc, inc, longascend, argper, meananom, G, total_mass
+):
+    """Convert orbital elements into Cartesian position and velocity vectors (in AU, AU/day or chosen units)."""
+
+    mu = G * total_mass  # gravitational parameter
+
+    # Solve Kepler's Equation: M = E - e*sin(E) for E
+    def kepler_equation(E, M, e):
+        return E - e * np.sin(E) - M
+
+    def kepler_equation_prime(E, e):
+        return 1 - e * np.cos(E)
+
+    # Newton-Raphson iteration
+    E = meananom
+    for _ in range(100):
+        dE = -kepler_equation(E, meananom, ecc) / kepler_equation_prime(E, ecc)
+        E += dE
+        if abs(dE) < 1e-10:
+            break
+
+    # True anomaly
+    nu = 2 * np.arctan2(
+        np.sqrt(1 + ecc) * np.sin(E / 2),
+        np.sqrt(1 - ecc) * np.cos(E / 2),
+    )
+
+    # Distance
+    r = semimaj * (1 - ecc * np.cos(E))
+
+    # Position in orbital plane
+    x_orb = r * np.cos(nu)
+    y_orb = r * np.sin(nu)
+    z_orb = 0.0
+
+    # Velocity in orbital plane
+    rdot = (np.sqrt(mu * semimaj) / r) * (-np.sin(E))
+    rfdot = (np.sqrt(mu * semimaj) / r) * (np.sqrt(1 - ecc**2) * np.cos(E))
+
+    vx_orb = rdot * np.cos(nu) - rfdot * np.sin(nu)
+    vy_orb = rdot * np.sin(nu) + rfdot * np.cos(nu)
+    vz_orb = 0.0
+
+    # Rotation matrices for inclination, longitude of ascending node, argument of periapsis
+    cosO, sinO = np.cos(longascend), np.sin(longascend)
+    cosi, sini = np.cos(inc), np.sin(inc)
+    cosw, sinw = np.cos(argper), np.sin(argper)
+
+    R = np.array([
+        [cosO*cosw - sinO*sinw*cosi, -cosO*sinw - sinO*cosw*cosi, sinO*sini],
+        [sinO*cosw + cosO*sinw*cosi, -sinO*sinw + cosO*cosw*cosi, -cosO*sini],
+        [sinw*sini, cosw*sini, cosi]
+    ])
+
+    r_vec = R @ np.array([x_orb, y_orb, z_orb])
+    v_vec = R @ np.array([vx_orb, vy_orb, vz_orb])
+
+    return r_vec, v_vec

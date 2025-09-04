@@ -4,3 +4,5 @@
 
 # Ignore any folder named "__pycache__" anywhere
 **/__pycache__/
+
+**nbody.txt
