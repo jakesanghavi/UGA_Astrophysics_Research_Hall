@@ -5,12 +5,12 @@ from constants import msolToMEarth, solradToREarth
 # Define variable groups as seen in the C++
 string_var = ["Output_Dir", "Integrator", "ParType", "NBodyOutput"]
 bool_var = ["Restart", "FullOutput", "PlanetaryIllumination"]
-int_var = ["Number_Bodies", "NLatitude", "NLongitude", "NLambda", "OrbitCenter"]
+int_var = ["Number_Bodies", "NLatitude", "NLongitude", "NLambda"]
 double_var = ["TimeStep", "SomeDouble", "SnapshotTime", "MaximumTime"]
 vector_string_var = ["BodyName", "BodyType"]
-# Didn't see anything that will fit this category
-vector_int_var = []
-vector_double_var = ["Position", "Velocity", "Mass", "Radius"]
+vector_int_var = ["OrbitCenter"]
+vector_double_var = ["Position", "Velocity", "Mass", "Radius", "SemiMajorAxis", "Eccentricity", \
+                    "Inclination", "LongAscend", "Periapsis", "MeanAnomaly"]
 
 class ParFile:
     def __init__(self, filename=None):

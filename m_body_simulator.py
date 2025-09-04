@@ -140,4 +140,4 @@ def main(argv):
     print(f"Run {nbody_system.getName()} complete")
     print(f"Wall Clock Runtime: {elapsed_time:.2f} s")
     
-main(["ph", "input.txt"])
+main(["ph", "orbital_input.txt"])

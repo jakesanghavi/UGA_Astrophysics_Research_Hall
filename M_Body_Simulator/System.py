@@ -438,7 +438,70 @@ class System:
             kinetic_energy += 0.5 * body_ref_mass * velocity ** 2
 
         self.totalEnergy = kinetic_energy + gravitational_potential
-        self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy   
+        self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy  
+        
+    # Set up all orbits given the orbit list of orbit centers
+    def setupOrbits(self, orbitCenters):
+        """
+        Sets up orbits for all bodies using NumPy arrays.
+        orbitCentre: list of ints (0=CoM, >0=host body index+1, <0=(0,0,0))
+        """
+
+        participants = np.zeros(self.bodyCount, dtype=int)
+        hosts = np.zeros(self.bodyCount, dtype=int)
+
+        # Firstly, set up objects around centre of mass
+        for b in range(self.bodyCount):
+            if orbitCenters[b] == 0:
+                participants[b] = 1
+                self.bodies[b].calcVectorFromOrbit(self.G, self.totalMass)
+            elif orbitCenters[b] < 0:
+                self.bodies[b].calcVectorFromOrbit(self.G, self.totalMass - self.bodies[b].mass)
+
+        # Transform them to COM Frame
+        self.transformToCOMFrame(participants)
+
+        # Arrays for host system totals
+        totalMassAroundHost = np.zeros(self.bodyCount)
+        xCOMroundHost = np.zeros((self.bodyCount, 3))
+        vCOMroundHost = np.zeros((self.bodyCount, 3))
+
+        # i) Place satellites around host at centre
+        for b in range(self.bodyCount):
+            if orbitCenters[b] > 0:
+                ihost = orbitCenters[b] - 1
+                hosts[ihost] = 1
+                totalMassAroundHost[ihost] += self.bodies[b].mass
+
+        # Add host mass to totals
+        for b in range(self.bodyCount):
+            if hosts[b] == 1:
+                totalMassAroundHost[b] += self.bodies[b].mass
+
+        # Setup bodies in orbit around each host
+        for b in range(self.bodyCount):
+            if orbitCenters[b] > 0:
+                ihost = orbitCenters[b] - 1
+                self.bodies[b].calcVectorFromOrbit(self.G, totalMassAroundHost[ihost])
+
+                # Transform to host frame
+                framepos = -self.bodies[ihost].position
+                framevel = -self.bodies[ihost].velocity
+                self.bodies[b].changeFrame(framepos, framevel)
+
+                # Compute COM of host system (minus host contribution)
+                xCOMroundHost[ihost] += self.bodies[b].mass * self.bodies[b].position
+                vCOMroundHost[ihost] += self.bodies[b].mass * self.bodies[b].velocity
+
+        # Adjust hosts so the CoM of the system follows host's orbit
+        for b in range(self.bodyCount):
+            if hosts[b] == 1:
+                newPosition = (self.bodies[b].position * totalMassAroundHost[b] - xCOMroundHost[b]) / self.bodies[b].mass
+                newVelocity = (self.bodies[b].velocity * totalMassAroundHost[b] - vCOMroundHost[b]) / self.bodies[b].mass
+
+                self.bodies[b].position = newPosition
+                self.bodies[b].velocity = newVelocity
+ 
         
     # Write nbody information
     def outputNBodyData(self, output_file, time, orbit_centers):
@@ -559,3 +622,6 @@ class System:
     
     def getName(self):
         return self.name
+    
+    def getBody(self, index):
+        return self.bodies[index]

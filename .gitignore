@@ -6,7 +6,12 @@
 **/__pycache__/
 
 # Ignore intermediate files when committing
-**nbody.txt
+**nbody**
 
 # Ignore the output .info file
 **.info
+
+# Ignore flux files for specific stars
+Star_**
+
+**flux.txt

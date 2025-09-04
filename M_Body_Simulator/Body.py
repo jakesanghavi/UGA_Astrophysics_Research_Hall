@@ -149,6 +149,69 @@ class Body:
         else:
             self.argumentPeriapsis = 0.0
             self.longitudePeriapsis = 0.0
+            
+    def rotateZ(vec, angle):
+            c, s = np.cos(angle), np.sin(angle)
+            R = np.array([[c, -s, 0],
+                        [s,  c, 0],
+                        [0,  0, 1]])
+            return R @ vec
+
+    def rotateX(vec, angle):
+        c, s = np.cos(angle), np.sin(angle)
+        R = np.array([[1, 0,  0],
+                    [0, c, -s],
+                    [0, s,  c]])
+        return R @ vec        
+    
+    # Calculate body position and velocity in 3-space
+    # given orbital elements
+    def calcVectorFromOrbit(self, G, totmass):
+
+        # Calculate distance from CoM using semi-major axis, eccentricity, and true anomaly
+        magpos = self.semiMajorAxis * (1.0 - self.eccentricity**2) / (1.0 + self.eccentricity * np.cos(self.trueAnomaly))
+
+        # Position in orbital plane
+        position = np.array([
+            magpos * np.cos(self.trueAnomaly),
+            magpos * np.sin(self.trueAnomaly),
+            0.0
+        ])
+
+        # Velocity in orbital plane
+        semiLatusRectum = abs(self.semiMajorAxis * (1.0 - self.eccentricity**2))
+        gravparam = G * totmass
+
+        if semiLatusRectum != 0.0:
+            magvel = np.sqrt(gravparam / semiLatusRectum)
+        else:
+            magvel = 0.0
+
+        velocity = np.array([
+            -magvel * np.sin(self.trueAnomaly),
+            magvel * (np.cos(self.trueAnomaly) + self.eccentricity),
+            0.0
+        ])
+        
+
+        # Rotate around z by -argument of periapsis
+        if self.argumentPeriapsis != 0.0:
+            position = self.rotateZ(position, -self.argumentPeriapsis)
+            velocity = self.rotateZ(velocity, -self.argumentPeriapsis)
+
+        # Rotate around x by -inclination
+        if self.inclination != 0.0:
+            position = self.rotateX(position, -self.inclination)
+            velocity = self.rotateX(velocity, -self.inclination)
+
+        # Rotate around z by -longitude of ascending node
+        if self.longitudeAscendingNode != 0.0:
+            position = self.rotateZ(position, -self.longitudeAscendingNode)
+            velocity = self.rotateZ(velocity, -self.longitudeAscendingNode)
+
+        # Save results
+        self.position = position
+        self.velocity = velocity
 
     def calcPeriod(self, G, totalMass):
         if self.semiMajorAxis == 0:

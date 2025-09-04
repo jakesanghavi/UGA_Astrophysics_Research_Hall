@@ -39,3 +39,21 @@ Radius 0.0091577
 Position 1.0 0.0 0.0
 Velocity 0.0 6.283 0.0
 OrbitCenter 0
+
+-- Body 2
+BodyName Mars
+BodyType Planet
+Mass 3.2e-7
+Radius 0.00487
+Position 1.52 0.0 0.0
+Velocity 0.0 5.1 0.0
+OrbitCenter 0
+
+-- Body 3
+BodyName Jupiter
+BodyType Planet
+Mass 9.5e-4
+Radius 0.1
+Position 5.2 0.0 0.0
+Velocity 0.0 2.75 0.0
+OrbitCenter 0
