@@ -306,3 +306,64 @@ class Body:
     def resetFluxTotals(self): pass
     def findSurfaceLocation(self, longitude, latitude): pass
     def calcLongitudeOfNoon(self, star, istar): pass
+    
+    def getMass(self):
+        return self.mass
+    
+    def getAcceleration(self):
+        return self.acceleration
+    
+    def setAcceleration(self, acc):
+        self.acceleration = acc
+        
+    def getJerk(self):
+        return self.jerk
+        
+    def setJerk(self, je):
+        self.jerk = je
+        
+    def setSnap(self, sn):
+        self.snap = sn
+        
+    def setCrackle(self, cr):
+        self.crackle = cr
+        
+    def setPosition(self, pos):
+        self.position = pos
+        
+    def getPosition(self):
+        return self.position
+    
+    def setVelocity(self, vel):
+        self.velocity = vel
+    
+    def getVelocity(self):
+        return self.velocity
+    
+    def getType(self):
+        return self.type
+    
+    def getName(self):
+        return self.name
+    
+    def getRadius(self):
+        return self.radius
+    
+    def getSemiMajorAxis(self):
+        return self.semiMajorAxis
+    
+    def getEccentricity(self):
+        return self.eccentricity
+    
+    def getInclination(self):
+        return self.inclination
+    
+    def getLongitudeAscendingNode(self):
+        return self.longitudeAscendingNode
+    
+    def getArgumentPeriapsis(self):
+        return self.argumentPeriapsis
+    
+    def getMeanAnomaly(self):
+        return self.meanAnomaly
+    

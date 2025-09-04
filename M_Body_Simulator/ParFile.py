@@ -5,7 +5,7 @@ from constants import msolToMEarth, solradToREarth
 # Define variable groups as seen in the C++
 string_var = ["Output_Dir", "Integrator", "ParType", "NBodyOutput"]
 bool_var = ["Restart", "FullOutput", "PlanetaryIllumination"]
-int_var = ["Number_Bodies", "NLatitude", "NLongitude", "NLambda"]
+int_var = ["Number_Bodies", "NLatitude", "NLongitude", "NLambda", "OrbitCenter"]
 double_var = ["TimeStep", "SomeDouble", "SnapshotTime", "MaximumTime"]
 vector_string_var = ["BodyName", "BodyType"]
 # Didn't see anything that will fit this category

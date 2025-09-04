@@ -45,10 +45,10 @@ class System:
         self.calcInitialProperties()
 
     # Set the "host" bodies (the parent star/s)
-    def setHostBodies(self, orbitCentre):
+    def setHostBodies(self, orbitCenter):
         for i in range(self.bodyCount):
-            if orbitCentre[i] > 0:
-                host_index = orbitCentre[i] - 1
+            if orbitCenter[i] > 0:
+                host_index = orbitCenter[i] - 1
                 self.bodies[i].hostBody = self.bodies[host_index]
                 self.bodies[host_index].hostMass += self.bodies[i].mass
 
@@ -356,23 +356,27 @@ class System:
             temperatures[i] = (flux / self.sigma_SB) ** 0.25
         return temperatures
 
-    # 2d Flux map creation
-    def calc2DFlux(self, resolution=100):
-        x = np.linspace(-2*self.AU, 2*self.AU, resolution)
-        y = np.linspace(-2*self.AU, 2*self.AU, resolution)
-        flux_map = np.zeros((resolution, resolution))
+    # 2d Flux map creation for planetsurface bodies
+    def calc2DFlux(self, time, dt):
 
-        for i, xi in enumerate(x):
-            for j, yj in enumerate(y):
-                point = np.array([xi, yj, 0.0])
-                total_flux = 0.0
-                for body in self.bodies:
-                    r_vec = point - body.getPosition()
-                    r = np.linalg.norm(r_vec)
-                    if r > 0:
-                        total_flux += body.getLuminosity() / (4.0 * np.pi * r**2)
-                flux_map[j, i] = total_flux
-        return flux_map
+        # Loop through each body
+        for j, body in enumerate(self.bodies):
+            if body.getType() == "PlanetSurface":
+                body.resetFluxTotals()
+
+                eclipsefrac = self.checkForEclipses(j)
+
+                for i, source in enumerate(self.bodies):
+                    if i == j:
+                        continue
+
+                    if source.getType() == "Star":
+                        body.calcFlux(i, source, eclipsefrac[i], time, dt)
+
+                    elif source.getType() == "Planet" and self.planetaryIlluminationOn:
+                        body.calcFlux(i, source, eclipsefrac[i], time, dt)
+
+                body.calcIntegratedQuantities(dt)
 
     # Write final system state to a file
     def outputSystemState(self, filename="system_output.txt"):
@@ -424,20 +428,111 @@ class System:
                     body_question_pos = body_question.getPosition()
                     body_question_mass = body_question.getMass()
 
-                    r_vector = body_question_pos.relativeVector(body_ref_pos)
-                    r_distance = r_vector.magVector()
+                    r_vector = body_question_pos - body_ref_pos
+                    r_distance = np.linalg.norm(r_vector)
 
                     gravitational_potential += -self.G * body_ref_mass * body_question_mass / r_distance
 
             # Kinetic energy
-            velocity = body_ref_vel.magVector()
+            velocity = np.linalg.norm(body_ref_vel)
             kinetic_energy += 0.5 * body_ref_mass * velocity ** 2
 
         self.totalEnergy = kinetic_energy + gravitational_potential
-        self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy     
+        self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy   
+        
+    # Write nbody information
+    def outputNBodyData(self, output_file, time, orbit_centers):
+        # Transform to the Centre of Mass Frame
+        self.transformToCOMFrame()
+
+        # Enum over the bodies
+        for j, body in enumerate(self.bodies):
+            if orbit_centers[j] > 0:
+                # Use another body as the orbit center
+                # Don't think this line is right
+                ref_body = self.bodies[orbit_centers[j] - 1]
+                body.calcOrbitFromVector(self.G, ref_body)
+            else:
+                # Use total system mass
+                body.calcOrbitFromVector(self.G, self.totalMass)
+
+            position = body.getPosition()
+            velocity = body.getVelocity()
+
+            # Output format CSV
+            line = (
+                f"{time:+.4E},"
+                f"{self.totalEnergy:+.4E},"
+                f"{body.getName()},"
+                f"{body.getMass():+.4E},"
+                f"{body.getRadius():+.4E},"
+                f"{position[0]:+.4E},{position[1]:+.4E},{position[2]:+.4E},"
+                f"{velocity[0]:+.4E},{velocity[1]:+.4E},{velocity[2]:+.4E},"
+                f"{body.getSemiMajorAxis():+.4E},"
+                f"{body.getEccentricity():+.4E},"
+                f"{body.getInclination():+.4E},"
+                f"{body.getLongitudeAscendingNode():+.4E},"
+                f"{body.getArgumentPeriapsis():+.4E},"
+                f"{body.getMeanAnomaly():+.4E}\n"
+            )
+
+            output_file.write(line)
+
+        output_file.flush()  
+        
+    # Write planetsurface fluxes to files
+    def output2DFluxData(self, snapshotNumber, tSnap, prefixString):
+        for _, body in enumerate(self.bodies):
+            if body.getType() == "PlanetSurface":
+                
+                if self.fullOutput:  
+                    # Equivalent to bodies[b]->writeFluxFile(snapshotNumber, nTime, tSnap, prefixString);
+                    body.writeFluxFile(snapshotNumber, self.nTime, tSnap, prefixString)
+                
+                # Equivalent to bodies[b]->writeToLocationFiles(tSnap, bodies);
+                body.writeToLocationFiles(tSnap, self.bodies)
+    
+    # Write integrated flux info to file
+    def outputIntegratedFluxData(self):
+        for body in self.bodies:
+            if body.getType() == "PlanetSurface":
+                body.writeIntegratedFile()
+           
+    # Create the output .info file     
+    def outputInfoFile(self, n_snaps, input_params):
+        file_name = f"{self.getName()}.info"
+        globalFluxMax = 0.0
+        nStars = self.countStars()
+
+        with open(file_name, "w") as infoFile:
+            # Write number of snapshots
+            infoFile.write(f"# Number of snapshots\n{n_snaps}\n")
+            # Write number of stars
+            infoFile.write(f"# Number of stars\n{nStars}\n")
+
+            for i, body in enumerate(self.bodies):
+                if body.getType() == "Star":
+                    name_of_body = input_params.getStringVariable("BodyName", i)
+                    infoFile.write(f"# Star name\n{name_of_body}\n")
+                    infoFile.write(
+                        f"# Radius (m)  Teff (K)  Peak wavelength (m)\n"
+                        f"{body.getRadius():+.4E} {body.getTeff():+.4E} {body.calculatePeakWavelength():+.4E}\n"
+                    )
+                elif body.getType() == "PlanetSurface":
+                    if body.getFluxMax() > globalFluxMax:
+                        globalFluxMax = body.getFluxMax()
+
+            # Write maximum flux
+            infoFile.write(f"# Maximum flux across all PlanetSurface objects (W/m^2)\n{globalFluxMax:+.4E}\n")
+
+
+            
+    # Count the number of stars in the system
+    def countStars(self):
+        return sum(1 for body in self.bodies if body.getType() == "Star")
+
     
     # Additional getter setters
-    
     def setName(self, namestring):
         self.name = namestring
 
@@ -461,3 +556,6 @@ class System:
         
     def getTimestep(self):
         return self.timeStep
+    
+    def getName(self):
+        return self.name

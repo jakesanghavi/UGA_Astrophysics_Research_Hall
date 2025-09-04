@@ -5,4 +5,8 @@
 # Ignore any folder named "__pycache__" anywhere
 **/__pycache__/
 
+# Ignore intermediate files when committing
 **nbody.txt
+
+# Ignore the output .info file
+**.info

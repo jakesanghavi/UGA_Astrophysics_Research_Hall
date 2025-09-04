@@ -64,7 +64,7 @@ def main(argv):
     nbody_system = System(system_name, body_array)
 
     # Set orbit centers
-    orbit_centers = [input_params.getIntVariable("OrbitCentre", i) for i in range(n_bodies)]
+    orbit_centers = [input_params.getIntVariable("OrbitCenter", i) for i in range(n_bodies)]
     nbody_system.setHostBodies(orbit_centers)
 
     # Setup orbits if required
@@ -133,7 +133,7 @@ def main(argv):
 
     # Write integrated data
     nbody_system.outputIntegratedFluxData()
-    nbody_system.outputInfoFile(snapshot_number)
+    nbody_system.outputInfoFile(snapshot_number, input_params)
 
     # End time
     elapsed_time = time.time() - start_time

@@ -29,6 +29,7 @@ Mass 1.0
 Radius 1.0
 Position 0.0 0.0 0.0
 Velocity 0.0 0.0 0.0
+OrbitCenter 0
 
 -- Body 1
 BodyName Earth
@@ -37,3 +38,4 @@ Mass 3.0e-6
 Radius 0.0091577
 Position 1.0 0.0 0.0
 Velocity 0.0 6.283 0.0
+OrbitCenter 0
