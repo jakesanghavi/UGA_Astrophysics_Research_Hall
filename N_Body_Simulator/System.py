@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 
 # N-Body System on which our simulation will run
 class System:
@@ -504,7 +505,7 @@ class System:
  
         
     # Write nbody information
-    def outputNBodyData(self, output_file, time, orbit_centers):
+    def outputNBodyData(self, output_file, time, orbit_centers, input_params):
         # Transform to the Centre of Mass Frame
         self.transformToCOMFrame()
 
@@ -521,12 +522,14 @@ class System:
 
             position = body.getPosition()
             velocity = body.getVelocity()
+            
+            body_name = input_params.getStringVariable('BodyName', j)
 
             # Output format CSV
             line = (
                 f"{time:+.4E},"
                 f"{self.totalEnergy:+.4E},"
-                f"{body.getName()},"
+                f"{body_name},"
                 f"{body.getMass():+.4E},"
                 f"{body.getRadius():+.4E},"
                 f"{position[0]:+.4E},{position[1]:+.4E},{position[2]:+.4E},"
@@ -544,16 +547,14 @@ class System:
         output_file.flush()  
         
     # Write planetsurface fluxes to files
-    def output2DFluxData(self, snapshotNumber, tSnap, prefixString):
-        for _, body in enumerate(self.bodies):
+    def output2DFluxData(self, snapshotNumber, tSnap, prefixString, input_params):
+        for i, body in enumerate(self.bodies):
             if body.getType() == "PlanetSurface":
                 
                 if self.fullOutput:  
-                    # Equivalent to bodies[b]->writeFluxFile(snapshotNumber, nTime, tSnap, prefixString);
                     body.writeFluxFile(snapshotNumber, self.nTime, tSnap, prefixString)
                 
-                # Equivalent to bodies[b]->writeToLocationFiles(tSnap, bodies);
-                body.writeToLocationFiles(tSnap, self.bodies)
+                body.writeToLocationFiles(tSnap, self.bodies, body_name=input_params.getStringVariable("BodyName", i))
     
     # Write integrated flux info to file
     def outputIntegratedFluxData(self):

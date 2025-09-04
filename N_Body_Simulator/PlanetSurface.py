@@ -135,12 +135,12 @@ class PlanetSurface(Body):
         self.darkness[mask] += dt
 
     # Write location data for a certain timestep
-    def writeToLocationFiles(self, time, bodies):
+    def writeToLocationFiles(self, time, bodies, body_name):
         for istar in range(self.nStars):
             body = bodies[istar]
             if body.getType() == "Star":
                 # Generate filename from star name
-                filename = f"Star_{body.getName()}_locations.txt"
+                filename = f"Star_{body_name}_locations.txt"
 
                 # Star position relative to planet
                 starpos = body.getPosition() - self.getPosition()  # NumPy array

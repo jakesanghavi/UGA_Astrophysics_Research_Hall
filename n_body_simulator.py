@@ -125,8 +125,8 @@ def main(argv):
         snapshot_number += 1
 
         # Output data
-        nbody_system.outputNBodyData(output_file, time_yr, orbit_centers)
-        nbody_system.output2DFluxData(snapshot_number, time_yr, system_name)
+        nbody_system.outputNBodyData(output_file, time_yr, orbit_centers, input_params)
+        nbody_system.output2DFluxData(snapshot_number, time_yr, system_name, input_params)
 
     # Close output file
     output_file.close()
