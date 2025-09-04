@@ -6,7 +6,7 @@ from constants import msolToMEarth, solradToREarth
 string_var = ["Output_Dir", "Integrator", "ParType", "NBodyOutput"]
 bool_var = ["Restart", "FullOutput", "PlanetaryIllumination"]
 int_var = ["Number_Bodies", "NLatitude", "NLongitude", "NLambda"]
-double_var = ["TimeStep", "SomeDouble", "SnapshotTime", "MaximumTime"]
+double_var = ["TimeStep", "SomeDouble", "SnapshotTime", "MaximumTime", "TotalMass"]
 vector_string_var = ["BodyName", "BodyType"]
 vector_int_var = ["OrbitCenter"]
 vector_double_var = ["Position", "Velocity", "Mass", "Radius", "SemiMajorAxis", "Eccentricity", \
@@ -22,7 +22,8 @@ class ParFile:
         # Dictionaries for variable storage
         self.string_variables = {}
         self.int_variables = {}
-        self.double_variables = {}
+        # Set this as default 0
+        self.double_variables = {"TotalMass": 0}
         self.vector_string_variables = {}
         self.vector_int_variables = {}
         self.vector_double_variables = {}
@@ -97,6 +98,9 @@ class ParFile:
                 self.vector_double_variables.setdefault(f"X{par}", [])[body_index:body_index+1] = [x]
                 self.vector_double_variables.setdefault(f"Y{par}", [])[body_index:body_index+1] = [y]
                 self.vector_double_variables.setdefault(f"Z{par}", [])[body_index:body_index+1] = [z]
+            elif par == "Mass":
+                self.double_variables["TotalMass"] += float(values[0])
+                self.vector_double_variables.setdefault(par, [])[body_index:body_index+1] = [float(values[0])]
             else:
                 self.vector_double_variables.setdefault(par, [])[body_index:body_index+1] = [float(values[0])]
         return body_index

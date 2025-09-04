@@ -432,14 +432,23 @@ class System:
                     r_vector = body_question_pos - body_ref_pos
                     r_distance = np.linalg.norm(r_vector)
 
-                    gravitational_potential += -self.G * body_ref_mass * body_question_mass / r_distance
+                    # Small amount to deal with gravitational potential of overlapping bodies
+                    # Tweak as needed
+                    epsilon = 1e-9
+                    gravitational_potential += -self.G * body_ref_mass * body_question_mass / np.sqrt(r_distance**2 + epsilon**2)
+
 
             # Kinetic energy
             velocity = np.linalg.norm(body_ref_vel)
             kinetic_energy += 0.5 * body_ref_mass * velocity ** 2
 
         self.totalEnergy = kinetic_energy + gravitational_potential
-        self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy  
+        
+        # Again safety check for div0
+        if self.initialEnergy == 0:
+            self.deltaEnergy = 0.0
+        else:
+            self.deltaEnergy = (self.totalEnergy - self.initialEnergy) / self.initialEnergy
         
     # Set up all orbits given the orbit list of orbit centers
     def setupOrbits(self, orbitCenters):

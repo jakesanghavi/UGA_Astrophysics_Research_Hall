@@ -57,7 +57,12 @@ class PlanetSurface(Body):
         starpos = star.getPosition()
         pos = starpos - planetpos
         magpos = np.linalg.norm(pos)
-        unitpos = pos / magpos
+        
+        # Pos can be 0. This is a safe check
+        if magpos > 0:
+            unitpos = pos / magpos
+        else:
+            unitpos = np.zeros_like(pos)
         lstar = star.getLuminosity()
 
         # Declination vector

@@ -5,6 +5,7 @@ from N_Body_Simulator.Star import Star
 from N_Body_Simulator.Planet import Planet
 from N_Body_Simulator.PlanetSurface import PlanetSurface
 from constants import Gsi as G, twopi
+from utils import safe_get
 import sys
 
 # Run the simulation
@@ -45,15 +46,39 @@ def main(argv):
     n_bodies = input_params.getIntVariable("Number_Bodies")
     print("Creating bodies")
     for i in range(n_bodies):
-        body_name = input_params.getStringVariable("BodyName", i)
-        body_type = input_params.getStringVariable("BodyType", i)
-        print(f"Creating Body {body_name}")
+        # Get relevant parameters
+        body_name = safe_get(input_params.getStringVariable, "BodyName", i)
+        body_type = safe_get(input_params.getStringVariable, "BodyType", i)
+        mass = safe_get(input_params.getDoubleVariable, "Mass", i)
+        radius = safe_get(input_params.getDoubleVariable, "Radius", i)
+        position = safe_get(input_params.getDoubleVariable, "Position", i)
+        velocity = safe_get(input_params.getDoubleVariable, "Velocity", i)
+        semimaj = safe_get(input_params.getDoubleVariable, "SemiMajorAxis", i)
+        ecc = safe_get(input_params.getDoubleVariable, "Eccentricity", i)
+        inc = safe_get(input_params.getDoubleVariable, "Inclination", i)
+        longascend = safe_get(input_params.getDoubleVariable, "LongAscend", i)
+        argper = safe_get(input_params.getDoubleVariable, "Periapsis", i)
+        meananom = safe_get(input_params.getDoubleVariable, "MeanAnomaly", i)
+        
+        # No need for safe_get, this is pre-defined
+        totalMass = input_params.getDoubleVariable("TotalMass")
+        
+        print(body_type)
+
+        
         if body_type == "Star":
-            body_array.append(Star(input_params, i, G))
+            body_array.append(Star(name=body_name, mass=mass, radius=radius, 
+                                   position=position, velocity=velocity, semimaj=semimaj, 
+                                   ecc=ecc, inc=inc, longascend=longascend, argper=argper, 
+                                   meananom=meananom, G=G, totalMass=totalMass))
         elif body_type == "Planet":
-            body_array.append(Planet(input_params, i, G))
+            body_array.append(Planet(name=body_name, mass=mass, radius=radius, 
+                                   position=position, velocity=velocity, semimaj=semimaj, 
+                                   ecc=ecc, inc=inc, longascend=longascend, argper=argper, 
+                                   meananom=meananom, G=G, totalMass=totalMass))
         elif body_type == "PlanetSurface":
-            body_array.append(PlanetSurface(input_params, i, G))
+            body_array.append(PlanetSurface(name=body_name, mass=mass, radius=radius, 
+                                   pos=position, vel=velocity))
             # Handle restart for planetsurface body type
             # if restart:
             #     print(f"Reading Temperature data for World {body_array[-1].getName()}")

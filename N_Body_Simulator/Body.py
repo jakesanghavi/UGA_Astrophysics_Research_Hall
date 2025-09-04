@@ -100,7 +100,7 @@ class Body:
         self.period = self.calcPeriod(G, totmass)
 
         if self.magOrbitalAngularMomentum > 0.0:
-            self.inclination = math.acos(
+            self.inclination = self.safeAcos(
                 self.orbitalAngularMomentum[2] / self.magOrbitalAngularMomentum
             )
         else:
@@ -117,32 +117,38 @@ class Body:
                 0.0
             ])
             nscalar = np.linalg.norm(nplane)
-            self.longitudeAscendingNode = math.acos(nplane[0] / nscalar)
+            self.longitudeAscendingNode = self.safeAcos(nplane[0] / nscalar)
             if nplane[1] < 0.0:
                 self.longitudeAscendingNode = 2.0 * math.pi - self.longitudeAscendingNode
 
         r = np.linalg.norm(self.position)
 
         if self.eccentricity == 0.0 and self.inclination == 0.0:
-            self.trueAnomaly = math.acos(self.position[0] / r)
+            # Safety check if r is 0
+            if r == 0:
+                self.trueAnomaly = 0.0
+            else:
+                self.trueAnomaly = self.safeAcos(self.position[0] / r)
+                if self.velocity[0] < 0.0:
+                    self.trueAnomaly = 2.0 * math.pi - self.trueAnomaly
             if self.velocity[0] < 0.0:
                 self.trueAnomaly = 2.0 * math.pi - self.trueAnomaly
         elif self.eccentricity == 0.0:
             ndotR = np.dot(nplane, self.position) / (r * nscalar)
             ndotV = np.dot(nplane, self.velocity)
-            self.trueAnomaly = math.acos(ndotR)
+            self.trueAnomaly = self.safeAcos(ndotR)
             if ndotV > 0.0:
                 self.trueAnomaly = 2.0 * math.pi - self.trueAnomaly
         else:
             edotR = np.dot(self.eccentricityVector, self.position) / (r * self.eccentricity)
             rdotV = np.dot(self.velocity, self.position)
-            self.trueAnomaly = math.acos(edotR)
+            self.trueAnomaly = self.safeAcos(edotR)
             if rdotV < 0.0:
                 self.trueAnomaly = 2.0 * math.pi - self.trueAnomaly
 
         if self.eccentricity != 0.0:
             edotn = np.dot(self.eccentricityVector, nplane) / (nscalar * self.eccentricity)
-            self.argumentPeriapsis = math.acos(edotn)
+            self.argumentPeriapsis = self.safeAcos(edotn)
             if self.eccentricityVector[2] < 0.0:
                 self.argumentPeriapsis = 2.0 * math.pi - self.argumentPeriapsis
             self.longitudePeriapsis = self.argumentPeriapsis + self.longitudeAscendingNode

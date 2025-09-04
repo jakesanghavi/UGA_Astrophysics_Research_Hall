@@ -273,19 +273,17 @@ def calculate_intensity(T_star, R_star, a, f_a=1.0):
     flux = photon_flux_at_planet(T_star, R_star, a)
     return f_a * flux * conversion_factor
 
-def orbital_elements_to_state_vectors(
-    semimaj, ecc, inc, longascend, argper, meananom, G, total_mass
-):
+# Solve Kepler's Equation: M = E - e*sin(E) for E
+def kepler_equation(E, M, e):
+    return E - e * np.sin(E) - M
+
+def kepler_equation_prime(E, e):
+    return 1 - e * np.cos(E)
+
+def orbital_elements_to_state_vectors(semimaj, ecc, inc, longascend, argper, meananom, G, total_mass):
     """Convert orbital elements into Cartesian position and velocity vectors (in AU, AU/day or chosen units)."""
 
     mu = G * total_mass  # gravitational parameter
-
-    # Solve Kepler's Equation: M = E - e*sin(E) for E
-    def kepler_equation(E, M, e):
-        return E - e * np.sin(E) - M
-
-    def kepler_equation_prime(E, e):
-        return 1 - e * np.cos(E)
 
     # Newton-Raphson iteration
     E = meananom
@@ -310,8 +308,12 @@ def orbital_elements_to_state_vectors(
     z_orb = 0.0
 
     # Velocity in orbital plane
-    rdot = (np.sqrt(mu * semimaj) / r) * (-np.sin(E))
-    rfdot = (np.sqrt(mu * semimaj) / r) * (np.sqrt(1 - ecc**2) * np.cos(E))
+    # Safe divide by r
+    if r != 0.0:
+        rdot = (np.sqrt(mu * semimaj) / r) * (-np.sin(E))
+        rfdot = (np.sqrt(mu * semimaj) / r) * (np.sqrt(1 - ecc**2) * np.cos(E))
+    else:
+        rdot, rfdot = 0.0, 0.0
 
     vx_orb = rdot * np.cos(nu) - rfdot * np.sin(nu)
     vy_orb = rdot * np.sin(nu) + rfdot * np.cos(nu)
@@ -332,3 +334,9 @@ def orbital_elements_to_state_vectors(
     v_vec = R @ np.array([vx_orb, vy_orb, vz_orb])
 
     return r_vec, v_vec
+
+def safe_get(getter, key, index, default=None):
+    try:
+        return getter(key, index)
+    except KeyError:
+        return default
