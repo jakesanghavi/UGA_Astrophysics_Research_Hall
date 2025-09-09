@@ -1,6 +1,7 @@
 import math
 import numpy as np
 from utils import orbital_elements_to_state_vectors
+import sys
 
 # Template class for all bodies (planet, star, etc.) for the simulation
 class Body:
@@ -74,26 +75,43 @@ class Body:
         self.orbitalAngularMomentum = np.cross(self.position, self.velocity)
         self.magOrbitalAngularMomentum = np.linalg.norm(self.orbitalAngularMomentum)
 
-    def calcEccentricity(self, G, totmass):
-        gravparam = G * totmass
-        r = np.linalg.norm(self.position)
-        v = np.linalg.norm(self.velocity)
-        vdotr = np.dot(self.velocity, self.position)
+    # def calcEccentricity(self, G, totmass):
+    #     gravparam = G * totmass
+    #     r = np.linalg.norm(self.position)
+    #     v = np.linalg.norm(self.velocity)
+    #     vdotr = np.dot(self.velocity, self.position)
 
+    #     if r == 0.0:
+    #         self.eccentricityVector = np.zeros(3)
+    #     else:
+    #         self.eccentricityVector = (
+    #             (v**2 * self.position - vdotr * self.velocity) / gravparam
+    #             - self.position / r
+    #         )
+
+    #     self.eccentricity = np.linalg.norm(self.eccentricityVector)
+    
+    def calcEccentricity(self, G, host_mass, host_pos, host_vel):
+        gravparam = G * (self.getMass() + host_mass)
+
+        r_vec = self.position - host_pos
+        v_vec = self.velocity - host_vel
+
+        r = np.linalg.norm(r_vec)
         if r == 0.0:
             self.eccentricityVector = np.zeros(3)
-        else:
-            self.eccentricityVector = (
-                (v**2 * self.position - vdotr * self.velocity) / gravparam
-                - self.position / r
-            )
+            self.eccentricity = 0.0
+            return
 
+        h_vec = np.cross(r_vec, v_vec)
+        self.eccentricityVector = np.cross(v_vec, h_vec) / gravparam - r_vec / r
         self.eccentricity = np.linalg.norm(self.eccentricityVector)
+
 
     def calcOrbitFromVector(self, G, totmass):
         self.calcOrbitalAngularMomentum()
         self.calcEccentricity(G, totmass)
-
+        
         self.semiMajorAxis = (self.magOrbitalAngularMomentum**2) / (
             G * totmass * (1 - self.eccentricity**2)
         )

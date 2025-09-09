@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+from astropy.constants import G
 
 # N-Body System on which our simulation will run
 class System:
@@ -17,7 +18,8 @@ class System:
         # Initial params from the C++ version
         self.timeStep = 0.0
         self.timeControl = 0.00002
-        self.G = 1.0
+        # self.G = 1.0
+        self.G = G.value
         self.softeningLength = 1.0e-5
         
         # More energy + momentum factors to be computed below
@@ -517,17 +519,25 @@ class System:
     def outputNBodyData(self, output_file, time, orbit_centers, input_params):
         # Transform to the Centre of Mass Frame
         self.transformToCOMFrame()
-
+        
         # Enum over the bodies
         for j, body in enumerate(self.bodies):
+            # if orbit_centers[j] > 0:
+            #     # Use another body as the orbit center
+            #     # Don't think this line is right
+            #     ref_body = self.bodies[orbit_centers[j] - 1]
+            #     body.calcOrbitFromVector(self.G, ref_body)
+            # else:
+            #     body.calcOrbitFromVector(self.G, self.totalMass)
+            
             if orbit_centers[j] > 0:
-                # Use another body as the orbit center
-                # Don't think this line is right
+                # Orbiting another body (star, planet, etc.)
                 ref_body = self.bodies[orbit_centers[j] - 1]
-                body.calcOrbitFromVector(self.G, ref_body)
+                body.calcOrbitFromVector(self.G, ref_body.getMass(), ref_body.getPosition(), ref_body.getVelocity())
             else:
-                # Use total system mass
-                body.calcOrbitFromVector(self.G, self.totalMass)
+                # No host → this is the central reference (e.g., primary star or barycenter)
+                body.eccentricity = 0.0
+                body.eccentricityVector = np.zeros(3)
 
             position = body.getPosition()
             velocity = body.getVelocity()

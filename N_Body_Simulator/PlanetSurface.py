@@ -1,6 +1,7 @@
 import numpy as np
 from N_Body_Simulator.Body import Body
 from constants import twopi, pi, fluxsol
+import os
 
 # Class for a planetary surface body type
 class PlanetSurface(Body):
@@ -9,9 +10,13 @@ class PlanetSurface(Body):
     nLatMax = 500
     nLongMax = 500
     
-    def __init__(self, name="Planet", mass=1.0, radius=1.0, pos=None, vel=None,
-                 nStars=1, nLatitude=100, nLongitude=100, Pspin=1.0, obliquity=0.5123):
-        super().__init__(name, mass, radius, pos, vel)
+    def __init__(self, name="Planet", mass=1.0, radius=1.0, position=None, velocity=None,
+                 nStars=1, nLatitude=100, nLongitude=100, Pspin=1.0, obliquity=0.5123, 
+                 ecc=0, longascend=None, semimaj=None, inc=None, argper=None, 
+                meananom=0, G=None, total_mass=0):
+        super().__init__(name=name, mass=mass, radius=radius, position=position, velocity=velocity, 
+                         semimaj=semimaj, ecc=ecc, inc=inc, longascend=longascend, argper=argper, 
+                         meananom=meananom, G=G, total_mass=total_mass)
         
         self.type = "PlanetSurface"
         self.nStars = nStars
@@ -143,36 +148,46 @@ class PlanetSurface(Body):
     def writeToLocationFiles(self, time, bodies, body_name):
         for istar in range(self.nStars):
             body = bodies[istar]
-            if body.getType() == "Star":
-                # Generate filename from star name
-                filename = f"Star_{body_name}_locations.txt"
+            # Generate filename from star name
+            filename = f"{body_name}_locations.txt"
 
-                # Star position relative to planet
-                starpos = body.getPosition() - self.getPosition()  # NumPy array
+            # Star position relative to planet
+            starpos = body.getPosition() - self.getPosition()
 
-                # Extract picked longitude and latitude
-                lon = self.longitude[self.iLongPick]
-                lat = self.latitude[self.iLatPick]
+            # Extract picked longitude and latitude
+            lon = self.longitude[self.iLongPick]
+            lat = self.latitude[self.iLatPick]
 
-                # Flux, altitude, azimuth, hour angle
-                flux_val = self.flux[istar][self.iLongPick, self.iLatPick]
-                alt_val = self.altitude[istar][self.iLongPick, self.iLatPick]
-                az_val = self.azimuth[istar][self.iLongPick, self.iLatPick]
-                hour_angle_val = self.hourAngle[istar][self.iLongPick]
+            # Flux, altitude, azimuth, hour angle
+            flux_val = self.flux[istar][self.iLongPick, self.iLatPick]
+            alt_val = self.altitude[istar][self.iLongPick, self.iLatPick]
+            az_val = self.azimuth[istar][self.iLongPick, self.iLatPick]
+            hour_angle_val = self.hourAngle[istar][self.iLongPick]
 
-                # Open the file in append mode and write the data
-                with open(filename, 'a') as f:
+            # Open the file, write header if it's new
+            write_header = not os.path.exists(filename)
+            with open(filename, 'a') as f:
+                if write_header:
                     f.write(
-                        f"{time:+.4E} {starpos[0]:+.4E} {starpos[1]:+.4E} {starpos[2]:+.4E} "
-                        f"{lon:+.4E} {lat:+.4E} {flux_val:+.4E} {alt_val:+.4E} "
-                        f"{az_val:+.4E} {hour_angle_val:+.4E}\n"
+                        "# time  star_x  star_y  star_z  longitude  latitude  flux  altitude  azimuth  hour_angle\n"
                     )
+                f.write(
+                    f"{time:+.4E} {starpos[0]:+.4E} {starpos[1]:+.4E} {starpos[2]:+.4E} "
+                    f"{lon:+.4E} {lat:+.4E} {flux_val:+.4E} {alt_val:+.4E} "
+                    f"{az_val:+.4E} {hour_angle_val:+.4E}\n"
+                )
+
 
     # Write to a file
     def writeIntegratedFile(self):
         filename = "integrated_flux.txt"
 
         with open(filename, 'w') as f:
+            # Write header info
+            f.write("# Integrated flux data\n")
+            f.write(f"# Grid: {self.nLatitude} latitudes × {self.nLongitude} longitudes\n")
+            f.write("# Columns: Longitude (rad), Latitude (rad), IntegratedFlux, Darkness\n")
+
             # Write the number of latitude and longitude points
             f.write(f"{self.nLatitude} {self.nLongitude}\n")
 

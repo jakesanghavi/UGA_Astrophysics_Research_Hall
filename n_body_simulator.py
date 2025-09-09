@@ -59,6 +59,9 @@ def main(argv):
         longascend = safe_get(input_params.getDoubleVariable, "LongAscend", i)
         argper = safe_get(input_params.getDoubleVariable, "Periapsis", i)
         meananom = safe_get(input_params.getDoubleVariable, "MeanAnomaly", i)
+        luminosity = safe_get(input_params.getDoubleVariable, "Luminosity", i)
+        Teff = safe_get(input_params.getDoubleVariable, "EffectiveTemperature", i)
+        obliquity = safe_get(input_params.getDoubleVariable, "EffectiveTemperature", i)
         
         # No need for safe_get, this is pre-defined
         totalMass = input_params.getDoubleVariable("TotalMass")
@@ -70,7 +73,8 @@ def main(argv):
             body_array.append(Star(name=body_name, mass=mass, radius=radius, 
                                    position=position, velocity=velocity, semimaj=semimaj, 
                                    ecc=ecc, inc=inc, longascend=longascend, argper=argper, 
-                                   meananom=meananom, G=G, totalMass=totalMass))
+                                   meananom=meananom, G=G, totalMass=totalMass, luminosity=luminosity, 
+                                   Teff=Teff))
         elif body_type == "Planet":
             body_array.append(Planet(name=body_name, mass=mass, radius=radius, 
                                    position=position, velocity=velocity, semimaj=semimaj, 
@@ -78,7 +82,10 @@ def main(argv):
                                    meananom=meananom, G=G, totalMass=totalMass))
         elif body_type == "PlanetSurface":
             body_array.append(PlanetSurface(name=body_name, mass=mass, radius=radius, 
-                                   pos=position, vel=velocity))
+                                   position=position, velocity=velocity, semimaj=semimaj, 
+                                   ecc=ecc, inc=inc, longascend=longascend, argper=argper, 
+                                   meananom=meananom, G=G, total_mass=totalMass,
+                                   obliquity=obliquity))
             # Handle restart for planetsurface body type
             # if restart:
             #     print(f"Reading Temperature data for World {body_array[-1].getName()}")

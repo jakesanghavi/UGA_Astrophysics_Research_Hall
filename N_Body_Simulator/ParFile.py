@@ -10,7 +10,8 @@ double_var = ["TimeStep", "SomeDouble", "SnapshotTime", "MaximumTime", "TotalMas
 vector_string_var = ["BodyName", "BodyType"]
 vector_int_var = ["OrbitCenter"]
 vector_double_var = ["Position", "Velocity", "Mass", "Radius", "SemiMajorAxis", "Eccentricity", \
-                    "Inclination", "LongAscend", "Periapsis", "MeanAnomaly"]
+                    "Inclination", "LongAscend", "Periapsis", "MeanAnomaly", "Luminosity", \
+                    "EffectiveTemperature", "Obliquity"]
 
 class ParFile:
     def __init__(self, filename=None):
