@@ -1,7 +1,8 @@
 import numpy as np
-from astropy.constants import L_sun, sigma_sb, h, c, k_B, N_A
+from astropy.constants import sigma_sb, h, c, k_B, N_A
 from astropy import units as u
 from scipy.integrate import quad
+import re
 
 def calculate_max_photosynthesis_rate_no_resp():
     """
@@ -383,3 +384,53 @@ def calculate_intensity_latlon(T_star, R_star, a, lat, lon, f_a=1.0, declination
     ### SEASONAL FACTOR NOT IMPLEMENTED
     
     return base_intensity * cos_theta
+
+def get_planet_params(planet_name):
+    """
+    Calculate PAR intensity using star parameters, orbit parameters, and lat/long.
+    Parameters
+    ----------
+    planet_name : string
+        Name of the planet
+    Returns
+    -------
+    params : dict
+        Parameter grid for the given planet
+    """
+    clean_body_name = clean_name(planet_name)
+    if clean_body_name == "trappist1e":
+        params = {
+                "startemp": 2566.0,
+                "flux": 900.0,
+                "eccentricity": 0.005,
+                "obliquity": 0.0,
+                "fixedorbit": True,
+                "synchronous": True,
+                "rotationperiod": 6.101,
+                "radius": 0.92,
+                "gravity": 9.11,
+                "aquaplanet": False,
+                "timestep": 30.0,
+                "snapshots": 720,
+                "physicsfilter": "gp|exp|sp"
+                }
+        
+        return params
+    else:
+        raise ValueError("Planet not yet supported!")
+    
+def clean_name(body_name):
+    """
+    Normalizes the name of a body
+    Parameters
+    ----------
+    body_name : string
+        The name of the body
+    Returns
+    -------
+    cleaned_string : string
+        Cleaned name of the body
+    """
+    # Use re.sub() to remove non-alphanumeric characters, then convert to lowercase
+    cleaned_string = re.sub(r'[^a-zA-Z0-9]', '', body_name).lower()
+    return cleaned_string

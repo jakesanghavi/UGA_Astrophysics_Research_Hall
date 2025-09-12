@@ -1,15 +1,26 @@
 import exoplasim as exo
 from astropy.constants import L_sun, R_sun, sigma_sb
 from astropy import units as u
-from utils import calculate_intensity_latlon, calculate_P_curve
+from utils import calculate_intensity_latlon, calculate_P_curve, get_planet_params, clean_name
 import numpy as np
 from matplotlib import pyplot as plt
 
-# Configure and run the exoplasim model for Earth
-earth = exo.Model(workdir="earth",modelname="earth",resolution="T21",ncpus=4,layers=10,precision=8)
-earth.configure()
-earth.exportcfg()
-earth.run(years=1,clean=False)
+### SET THE PLANET NAME AND OTHER GLOBAL PARAMS HERE
+planet_name = "Earth"
+N_YEARS = 2
+
+# Configure and run the exoplasim model for any given planet
+# Must be supported in the utils file as the parameters are hard coded
+# Currently supports only Earth and Trappist-1-e
+planet_name_clean = clean_name(planet_name)
+planet = exo.Model(workdir=f"planet_model_{planet_name_clean}",modelname=f"planet_model_{planet_name_clean}",resolution="T21",ncpus=4,layers=10,precision=8)
+if planet_name_clean == "earth":  
+    planet.configure()
+else:
+    parameters = get_planet_params(planet_name)
+    planet.configure(**parameters)
+planet.exportcfg()
+planet.run(years=N_YEARS,clean=False)
 
 # Configure parameters for the star of interest (the Sun here)
 L_solar = L_sun.to(u.W)
@@ -17,19 +28,22 @@ R_solar = R_sun.to(u.m)
 T_solar = ((L_sun / (4 * np.pi * R_sun**2 * sigma_sb))**0.25).to(u.K)
 
 # Get out the temperature grid over each lat/lon from our exoplasim model
-ts = earth.inspect("ts",tavg=True)
-lon = earth.inspect("lon")
-lat = earth.inspect("lat")
+ts = planet.inspect("ts",tavg=True)
+lon = planet.inspect("lon")
+lat = planet.inspect("lat")
 LON, LAT = np.meshgrid(lon, lat)
 
 # Use 1 AU as present for Earth and convertt to meters for further calculations
 a = 1 * u.AU
 a_m = a.to(u.m)
 
-fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
-
 # Plotting conditions
 plot_list = [("paper", 0.2), ("paper", 1.0), ("ideal", 0.2), ("ideal", 1.0)]
+
+nrow = len({item[0] for item in plot_list})
+ncol = len({item[1] for item in plot_list})
+
+fig, axes = plt.subplots(nrow, ncol, figsize=(12, 10), constrained_layout=True)
 
 # Compute all photosynthesis rate maps to get global min and max
 P_maps = []
@@ -60,5 +74,8 @@ cbar = fig.colorbar(pcm_list[0], ax=axes,
                     label=r"Photosynthesis rate [$\mu$ mol photons $m^{-2}$ $s^{-1}$]",
                     location="right")
 
-plt.suptitle("Planetary Photosynthesis Rate Map")
+plt.suptitle(f"Planetary Photosynthesis Rate Map - {planet_name}")
+
+# Save the image
+plt.savefig(f"photosynthesis_map_{planet_name_clean}.png", dpi=300)
 plt.show()
