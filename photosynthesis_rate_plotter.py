@@ -1,7 +1,7 @@
 import exoplasim as exo
 from astropy.constants import L_sun, R_sun, sigma_sb
 from astropy import units as u
-from utils import calculate_intensity, calculate_P_curve
+from utils import calculate_intensity_latlon, calculate_P_curve
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -26,14 +26,6 @@ LON, LAT = np.meshgrid(lon, lat)
 a = 1 * u.AU
 a_m = a.to(u.m)
 
-# Calculate Earth intensity as a constant
-### THIS WILL BE CHANGED IN FUTURE WORK
-intensity = calculate_intensity(T_solar, R_solar, a_m)
-I = np.full(LAT.shape, intensity)
-
-# Use ts from exoplasim model
-P_map = calculate_P_curve(I, ts, conditions="ideal")
-
 fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
 
 # Plotting conditions
@@ -42,8 +34,7 @@ plot_list = [("paper", 0.2), ("paper", 1.0), ("ideal", 0.2), ("ideal", 1.0)]
 # Compute all photosynthesis rate maps to get global min and max
 P_maps = []
 for cond, f_a in plot_list:
-    intensity = calculate_intensity(T_solar, R_solar, a_m, f_a=f_a)
-    I = np.full(LAT.shape, intensity)
+    I = calculate_intensity_latlon(T_solar, R_solar, a_m, LAT, LON, f_a=f_a)
     P_map = calculate_P_curve(I, ts, conditions=cond)
     P_maps.append(P_map)
 

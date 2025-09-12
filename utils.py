@@ -340,3 +340,46 @@ def safe_get(getter, key, index, default=None):
         return getter(key, index)
     except KeyError:
         return default
+    
+def calculate_intensity_latlon(T_star, R_star, a, lat, lon, f_a=1.0, declination=0.0):
+    """
+    Calculate PAR intensity using star parameters, orbit parameters, and lat/long.
+    Parameters
+    ----------
+    T_star : float
+        Star temperature in K
+    R_star : float
+        Star radius in m
+    a : float
+        Orbital semi-major axis in m
+    lat : array
+        Latitude grid in degrees
+    lon : array
+        Longitude grid degrees
+    f_a : float
+        Atmospheric attenuation factor
+    declination : float
+        Setting to 0
+    Returns
+    -------
+    I : array
+        PAR intensity grid
+    """
+    # Base flux at top of atmosphere (old calculation)
+    base_flux = photon_flux_at_planet(T_star, R_star, a)
+    conversion_factor = 1e6 / N_A.value
+    base_intensity = base_flux * conversion_factor * f_a
+    
+    # Convert to radians
+    # Longitude is not being used right now - need advice on how to implement
+    lat_rad = np.radians(lat)
+    lon_rad = np.radians(lon)
+    dec_rad = np.radians(declination)
+    
+    # Local zenith angle factor
+    cos_theta = np.cos(lat_rad) * np.cos(dec_rad)
+    cos_theta = np.clip(cos_theta, 0, None)
+    
+    ### SEASONAL FACTOR NOT IMPLEMENTED
+    
+    return base_intensity * cos_theta
