@@ -3,6 +3,7 @@ from astropy.constants import sigma_sb, h, c, k_B, N_A
 from astropy import units as u
 from scipy.integrate import quad
 import re
+        
 
 def calculate_max_photosynthesis_rate_no_resp():
     """
@@ -401,6 +402,7 @@ def get_planet_params(planet_name):
     if clean_body_name == "trappist1e":
         params = {
                 "startemp": 2566.0,
+                "starradius": 0.12,
                 "flux": 900.0,
                 "eccentricity": 0.005,
                 "obliquity": 0.0,
@@ -419,6 +421,7 @@ def get_planet_params(planet_name):
     elif clean_body_name == "gj1061d":
         params = {
                 "startemp": 2977.0,
+                "starradius": 0.15,
                 "flux": 770.0,
                 # Having trouble finding this number. 
                 # NASA cites as < 0.53 but no lower bound

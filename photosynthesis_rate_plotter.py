@@ -7,8 +7,8 @@ from matplotlib import pyplot as plt
 import itertools
 
 ### SET THE PLANET NAME AND OTHER GLOBAL PARAMS HERE
-planet_name = "GJ-1061-d"
-N_YEARS = 3
+planet_name = input("Input planet name: ")
+N_YEARS = 2
 
 # Parameter grid you are interested in seeing in the output plot
 conditions_options = ["paper", "ideal"]
@@ -19,13 +19,15 @@ f_atm_options = [0.2, 1.0]
 # Currently supports only Earth and Trappist-1-e
 planet_name_clean = clean_name(planet_name)
 planet = exo.Model(workdir=f"planet_model_{planet_name_clean}",modelname=f"planet_model_{planet_name_clean}",resolution="T21",ncpus=4,layers=10,precision=8)
+
 if planet_name_clean == "earth":  
     planet.configure()
 else:
     parameters = get_planet_params(planet_name)
     planet.configure(**parameters)
+    
 planet.exportcfg()
-planet.run(years=N_YEARS,clean=False)
+planet.run(years=N_YEARS, clean=False)
 
 # Configure parameters for the star of interest (the Sun here)
 L_solar = L_sun.to(u.W)
