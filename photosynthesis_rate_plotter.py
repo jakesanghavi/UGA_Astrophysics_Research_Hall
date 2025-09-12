@@ -4,10 +4,15 @@ from astropy import units as u
 from utils import calculate_intensity_latlon, calculate_P_curve, get_planet_params, clean_name
 import numpy as np
 from matplotlib import pyplot as plt
+import itertools
 
 ### SET THE PLANET NAME AND OTHER GLOBAL PARAMS HERE
-planet_name = "Earth"
-N_YEARS = 2
+planet_name = "GJ-1061-d"
+N_YEARS = 3
+
+# Parameter grid you are interested in seeing in the output plot
+conditions_options = ["paper", "ideal"]
+f_atm_options = [0.2, 1.0]
 
 # Configure and run the exoplasim model for any given planet
 # Must be supported in the utils file as the parameters are hard coded
@@ -38,7 +43,7 @@ a = 1 * u.AU
 a_m = a.to(u.m)
 
 # Plotting conditions
-plot_list = [("paper", 0.2), ("paper", 1.0), ("ideal", 0.2), ("ideal", 1.0)]
+plot_list = list(itertools.product(conditions_options, f_atm_options))
 
 nrow = len({item[0] for item in plot_list})
 ncol = len({item[1] for item in plot_list})

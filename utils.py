@@ -416,6 +416,27 @@ def get_planet_params(planet_name):
                 }
         
         return params
+    elif clean_body_name == "gj1061d":
+        params = {
+                "startemp": 2977.0,
+                "flux": 770.0,
+                # Having trouble finding this number. 
+                # NASA cites as < 0.53 but no lower bound
+                # Setting as 0 for simplicity for now
+                "eccentricity": 0,
+                "obliquity": 0.0,
+                "fixedorbit": True,
+                "synchronous": True,
+                "rotationperiod": 13,
+                "radius": 1.16,
+                "gravity": 12,
+                "aquaplanet": False,
+                "timestep": 30.0,
+                "snapshots": 720,
+                "physicsfilter": "gp|exp|sp"
+                }
+        return params
+
     else:
         raise ValueError("Planet not yet supported!")
     
