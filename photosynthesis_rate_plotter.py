@@ -8,7 +8,12 @@ import itertools
 
 ### SET THE PLANET NAME AND OTHER GLOBAL PARAMS HERE
 planet_name = input("Input planet name: ")
-N_YEARS = 2
+N_YEARS = 3
+RESOLUTION = 'T42'
+NCPUS = 4
+NLAYERS = 10
+PRECISION = 8
+OUTPUT_TYPE='.npz'
 
 # Parameter grid you are interested in seeing in the output plot
 conditions_options = ["paper", "ideal"]
@@ -18,7 +23,7 @@ f_atm_options = [0.2, 1.0]
 # Must be supported in the utils file as the parameters are hard coded
 # Currently supports only Earth and Trappist-1-e
 planet_name_clean = clean_name(planet_name)
-planet = exo.Model(workdir=f"planet_model_{planet_name_clean}",modelname=f"planet_model_{planet_name_clean}",resolution="T21",ncpus=4,layers=10,precision=8)
+planet = exo.Model(workdir=f"planet_model_{planet_name_clean}",modelname=f"planet_model_{planet_name_clean}", resolution=RESOLUTION, ncpus=NCPUS, layers=NLAYERS, precision=PRECISION, outputtype=OUTPUT_TYPE)
 
 if planet_name_clean == "earth":  
     planet.configure()
@@ -35,8 +40,7 @@ R_solar = R_sun.to(u.m)
 T_solar = ((L_sun / (4 * np.pi * R_sun**2 * sigma_sb))**0.25).to(u.K)
 
 # Get out the temperature grid over each lat/lon from our exoplasim model
-tavg = True if N_YEARS > 1 else False
-ts = planet.inspect("ts",tavg=tavg)
+ts = planet.inspect("ts",tavg=True)
 lon = planet.inspect("lon")
 lat = planet.inspect("lat")
 LON, LAT = np.meshgrid(lon, lat)
@@ -85,5 +89,5 @@ cbar = fig.colorbar(pcm_list[0], ax=axes,
 plt.suptitle(f"Planetary Photosynthesis Rate Map - {planet_name}")
 
 # Save the image
-plt.savefig(f"photosynthesis_map_{planet_name_clean}_{N_YEARS}_years.png", dpi=300)
+plt.savefig(f"photosynthesis_map_{planet_name_clean}_{RESOLUTION}_RESOLUTION_{N_YEARS}_years.png", dpi=300)
 plt.show()
