@@ -283,7 +283,7 @@ class System:
         return eclipsefrac
 
     # Evolve the system from t0 to t
-    def evolveSystem(self, tbegin, tend=None):
+    def evolveSystem(self, tbegin, tend=None):        
         if tend is None:
             tend = tbegin
             tbegin = 0.0
@@ -302,6 +302,7 @@ class System:
             # Predict positions and velocities
             for i, body in enumerate(self.bodies):
                 pos, vel, acc, jerk = body.getPosition(), body.getVelocity(), body.getAcceleration(), body.getJerk()
+                print(f"self_acc: {acc}")
                 pos_p = pos + vel * self.timeStep + 0.5 * acc * self.timeStep**2 + (1/6) * jerk * self.timeStep**3
                 vel_p = vel + acc * self.timeStep + 0.5 * jerk * self.timeStep**2
                 predicted[i].setPosition(pos_p)

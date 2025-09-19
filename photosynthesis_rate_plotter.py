@@ -35,7 +35,8 @@ R_solar = R_sun.to(u.m)
 T_solar = ((L_sun / (4 * np.pi * R_sun**2 * sigma_sb))**0.25).to(u.K)
 
 # Get out the temperature grid over each lat/lon from our exoplasim model
-ts = planet.inspect("ts",tavg=True)
+tavg = True if N_YEARS > 1 else False
+ts = planet.inspect("ts",tavg=tavg)
 lon = planet.inspect("lon")
 lat = planet.inspect("lat")
 LON, LAT = np.meshgrid(lon, lat)
@@ -84,5 +85,5 @@ cbar = fig.colorbar(pcm_list[0], ax=axes,
 plt.suptitle(f"Planetary Photosynthesis Rate Map - {planet_name}")
 
 # Save the image
-plt.savefig(f"photosynthesis_map_{planet_name_clean}.png", dpi=300)
+plt.savefig(f"photosynthesis_map_{planet_name_clean}_{N_YEARS}_years.png", dpi=300)
 plt.show()

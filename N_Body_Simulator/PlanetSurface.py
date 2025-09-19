@@ -5,7 +5,7 @@ import os
 
 # Class for a planetary surface body type
 class PlanetSurface(Body):
-    # Consants as defined in the C++ version
+    # Constants as defined in the C++ version
     nStarMax = 10
     nLatMax = 500
     nLongMax = 500
@@ -52,8 +52,6 @@ class PlanetSurface(Body):
         self.iLongPick = (np.abs(self.longitude - longitude)).argmin()
         self.iLatPick = (np.abs(self.latitude - latitude)).argmin()
         
-    import numpy as np
-
     # Calculate flux from star over planet's surface
     def calcFlux(self, istar, star, eclipseFraction, time, dt):
 

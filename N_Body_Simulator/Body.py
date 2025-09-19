@@ -33,6 +33,7 @@ class Body:
             self.argumentPeriapsis = argper
             self.longitudeAscendingNode = longascend
             self.meanAnomaly = meananom
+            
         else:
             self.position = np.zeros(3)
             self.velocity = np.zeros(3)
@@ -305,6 +306,7 @@ class Body:
 
             rmag = np.linalg.norm(rel_position)
             if rmag < 1.0e-2 * softening_length:
+                print(f"r_mag test failed")
                 continue
 
             r2 = rmag * rmag + softening_length * softening_length
