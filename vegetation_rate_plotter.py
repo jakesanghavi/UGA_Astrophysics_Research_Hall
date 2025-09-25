@@ -1,7 +1,7 @@
 import exoplasim as exo
 from astropy.constants import L_sun, R_sun, sigma_sb
 from astropy import units as u
-from utils import calculate_intensity_latlon, calculate_P_curve, get_planet_params, clean_name
+from utils import get_planet_params, clean_name
 import numpy as np
 from matplotlib import pyplot as plt
 import itertools
