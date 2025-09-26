@@ -34,7 +34,10 @@ def model_earthlike_stepwise(planet, year):
     plt.colorbar(label="Vegetation rate")
     plt.xlabel("Longitude [deg]")
     plt.ylabel("Latitude [deg]")
-    plt.title(f"Planetary Vegetation Rate Map - {PLANET_NAME} Scaled by {MASS_RATIO}")
+    plt.title(
+        f"Planetary Vegetation - Earthlike Planet Scaled by {MASS_RATIO}\n"
+        f"Year: {year}"
+    )
 
     filename = f"vegetation_map_custom_earthlike_scaled_{MASS_RATIO}_year_{year}.png"
     plt.savefig(filename, dpi=300, bbox_inches="tight")
