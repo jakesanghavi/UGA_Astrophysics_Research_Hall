@@ -16,7 +16,7 @@ VEGACCEL = 1
 INIT_GROWTH = 0.5
 WET_SOIL = True
 
-def model_earthlike(pressure_fraction=1):
+def model_earthlike(pressure_fraction=1, mass_ratio=1):
     planet_params = {
         'vegetation': VEGETATION,
         'vegaccel': VEGACCEL,
@@ -38,6 +38,13 @@ def model_earthlike(pressure_fraction=1):
 
     for param in gas_params:
         planet_params[param] *= pressure_fraction
+    
+    g_new = 9.80665 * mass_ratio ** (1/3)
+    r_new = mass_ratio ** (1/3)
+    
+    planet_params['gravity'] = g_new
+    planet_params['radius'] = r_new
+
 
     # Create the model
     planet = exo.Model(

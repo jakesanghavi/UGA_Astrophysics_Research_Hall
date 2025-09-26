@@ -206,7 +206,7 @@ def par_integral(lam, T_star):
     denominator = (np.exp(h.value * c.value / (lam * k_B.value * T_star.value)) - 1)
     return numerator/denominator
 
-def photon_flux_star(T_star, R_star):
+def photon_flux_star(T_star, R_star, lambda_min = 400 * 10 ** (-9), lambda_max = 700 * 10 ** (-9)):
     """
     Integrate the photon radiance of a star
     across the photosynthetically active radiation (PAR)
@@ -224,12 +224,10 @@ def photon_flux_star(T_star, R_star):
     -------
     float : Total photon flux emitted by the star in the PAR range
     """
-    lambda_min = 400 * 10 ** (-9)
-    lambda_max = 700 * 10 ** (-9)
     integral, _ = quad(par_integral, lambda_min, lambda_max, args=(T_star,), limit=200)
     return 4 * np.pi * R_star**2 * integral
 
-def photon_flux_at_planet(T_star, R_star, a):
+def photon_flux_at_planet(T_star, R_star, a, lambda_min = 400 * 10 ** (-9), lambda_max = 700 * 10 ** (-9)):
     """
     Calculate the photon flux received by a planet
     from its parent star at orbital distance a.
@@ -248,7 +246,7 @@ def photon_flux_at_planet(T_star, R_star, a):
     -------
     float : Photon flux at the planet’s orbit in the PAR range
     """
-    n_dot = photon_flux_star(T_star, R_star)
+    n_dot = photon_flux_star(T_star, R_star, lambda_min, lambda_max)
     return n_dot / (4 * np.pi * a**2)
 
 def calculate_intensity(T_star, R_star, a, f_a=1.0):
@@ -371,6 +369,48 @@ def calculate_intensity_latlon(T_star, R_star, a, lat, lon, f_a=1.0, declination
     base_flux = photon_flux_at_planet(T_star, R_star, a)
     conversion_factor = 1e6 / N_A.value
     base_intensity = base_flux * conversion_factor * f_a
+    
+    # Convert to radians
+    # Longitude is not being used right now - need advice on how to implement
+    lat_rad = np.radians(lat)
+    lon_rad = np.radians(lon)
+    dec_rad = np.radians(declination)
+    
+    # Local zenith angle factor
+    cos_theta = np.cos(lat_rad) * np.cos(dec_rad)
+    cos_theta = np.clip(cos_theta, 0, None)
+    
+    ### SEASONAL FACTOR NOT IMPLEMENTED
+    
+    return base_intensity * cos_theta
+
+def calculate_flux_latlon(T_star, R_star, a, lat, lon, f_a=1, declination=0.0):
+    """
+    Calculate PAR intensity using star parameters, orbit parameters, and lat/long.
+    Parameters
+    ----------
+    T_star : float
+        Star temperature in K
+    R_star : float
+        Star radius in m
+    a : float
+        Orbital semi-major axis in m
+    lat : array
+        Latitude grid in degrees
+    lon : array
+        Longitude grid degrees
+    f_a : float
+        Atmospheric attenuation factor
+    declination : float
+        Setting to 0
+    Returns
+    -------
+    I : array
+        PAR intensity grid
+    """
+    # Base flux at top of atmosphere (old calculation)
+    base_flux = photon_flux_at_planet(T_star, R_star, a, )
+    base_intensity = base_flux
     
     # Convert to radians
     # Longitude is not being used right now - need advice on how to implement
