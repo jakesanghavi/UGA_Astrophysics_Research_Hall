@@ -16,6 +16,10 @@ VEGACCEL = 1
 INIT_GROWTH = 0.5
 WET_SOIL = True
 
+# Planet Comparison to Earth
+PRESSURE_FRACTION = 1
+MASS_RATIO = 1
+
 def model_earthlike(pressure_fraction=1, mass_ratio=1):
     planet_params = {
         'vegetation': VEGETATION,
@@ -64,7 +68,7 @@ def model_earthlike(pressure_fraction=1, mass_ratio=1):
     
     return planet
 
-planet = model_earthlike()
+planet = model_earthlike(PRESSURE_FRACTION, MASS_RATIO)
 
 # Get out the temperature grid over each lat/lon from our exoplasim model
 veg = planet.inspect("vegplantc",tavg=True)
