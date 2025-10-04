@@ -19,7 +19,22 @@ WET_SOIL = True
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO = 1
+MASS_RATIO = 10
+
+# Estimate radius of the planet based on its mass
+# This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
+def piecewise_radius_estimate():
+    # Small/rocky planets, like Earth
+    if MASS_RATIO < 4.37:
+        return 1.02 * (MASS_RATIO**0.27)
+    # Intermediate-mass planets
+    # H/He envelopes no longer neglible, so radius grows faster with mass than before
+    if MASS_RATIO < 127:
+        return 0.56 * (MASS_RATIO**0.67)
+    # Massive planets, mass dominated by light gas.
+    # Radius becomes almost constant and independent of mass
+    # This gas is semi-degenerate, leading to the constant relation
+    return 18.6 * (MASS_RATIO ** (-0.06))
 
 def model_earthlike_stepwise(planet, year):
     planet.run(years=1, clean=False)
@@ -68,8 +83,8 @@ gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', '
 for param in gas_params:
     planet_params[param] *= PRESSURE_FRACTION
 
-g_new = 9.80665 * MASS_RATIO ** (1/3)
-r_new = MASS_RATIO ** (1/3)
+r_new = piecewise_radius_estimate()
+g_new = 9.80665 * MASS_RATIO / (r_new ** 2)
 
 planet_params['gravity'] = g_new
 planet_params['radius'] = r_new
