@@ -2,7 +2,8 @@ import exoplasim as exo
 import numpy as np
 from matplotlib import pyplot as plt
 from veg_utils import calc_f_ret_big_rcb, calc_r_c
-from constants import mearth
+from constants import mearth, Gsi, pi, rearth
+import sys
 
 ### PLANET CONFIGURATION ###
 N_YEARS = 5
@@ -21,7 +22,10 @@ WET_SOIL = True
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO = 10
+MASS_RATIO = 5
+
+# Gas settings
+F_INIT = 0.05
 
 # Estimate radius of the planet based on its mass
 # This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
@@ -68,8 +72,17 @@ planet_params = {
         'vegaccel': VEGACCEL,
         'initgrowth': INIT_GROWTH,
         'wetsoil': WET_SOIL,
+        'pH2': 0.0,
         'pHe': 5.24e-6,
-}
+        'pN2': 0.78084,
+        'pO2': 0.20946,
+        'pCO2': 330.0e-6,
+        'pAr': 9.34e-3,
+        'pNe': 18.18e-6,
+        'pKr': 1.14e-6,
+        'pH2O': 0.01,
+        'pCH4': 0.0
+    }
 
 gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
 
@@ -77,18 +90,20 @@ for param in gas_params:
     if param in planet_params:
         planet_params[param] *= PRESSURE_FRACTION
 
-m_c = 0.325 * MASS_RATIO * mearth
-r_c = calc_r_c(m_c)
-r_rcb = 2 * r_c
-t_eq = 255
-planet_params['pHe'] = calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb)
-
 r_new = piecewise_radius_estimate()
+print(r_new)
 g_new = 9.80665 * MASS_RATIO / (r_new ** 2)
 
 planet_params['gravity'] = g_new
 planet_params['radius'] = r_new
 
+m_c = 0.325 * MASS_RATIO * mearth
+r_c = calc_r_c(m_c)
+r_rcb = 2 * r_c
+t_eq = 1000
+retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
+planet_params['pHe'] = 0.25 * retained_frac * (MASS_RATIO * mearth) ** 2 * F_INIT * Gsi / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pH2'] = 0.75 * retained_frac * (MASS_RATIO * mearth) ** 2 * F_INIT * Gsi  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 
 # Create the model
 planet = exo.Model(

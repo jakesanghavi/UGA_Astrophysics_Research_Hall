@@ -59,3 +59,5 @@ c_cgs = c*100
 c_mau = c_cgs * year / (twopi * AU)
 
 au_m = 1.49597870691 * (10 ** 11)
+
+g = 9.81

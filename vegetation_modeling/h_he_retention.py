@@ -105,7 +105,7 @@ for mass in range_over:
         m_c = mass * mearth
         
         # Override their assumptions with our own
-        # r_p = piecewise_radius_estimate(mass*mearth)
+        r_p = piecewise_radius_estimate(mass*mearth)
         # m_c = calc_cmf(mass*mearth, r_p) * mass * mearth
         r_c = calc_r_c(m_c)
         
@@ -127,7 +127,7 @@ min_values = []
 for temp, f_ret_list in f_rets.items():
     min_values.append(min(f_ret_list))
 
-plt.vlines(0.325, ymin=0, ymax=1, linestyles='dashed', color='k', label="Earth CMF")
+plt.vlines(calc_cmf(mearth, rearth), ymin=0, ymax=1, linestyles='dashed', color='k', label="Earth CMF")
 plt.xlim([0.1,10])
 plt.xticks([0.1] + list(range(1, 11)))
 plt.ylim([np.min(min_values),1])
