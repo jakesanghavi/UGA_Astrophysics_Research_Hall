@@ -1,6 +1,8 @@
 import exoplasim as exo
 import numpy as np
 from matplotlib import pyplot as plt
+from veg_utils import calc_f_ret_big_rcb, calc_r_c
+from constants import mearth
 
 ### PLANET CONFIGURATION ###
 N_YEARS = 5
@@ -66,22 +68,20 @@ planet_params = {
         'vegaccel': VEGACCEL,
         'initgrowth': INIT_GROWTH,
         'wetsoil': WET_SOIL,
-        'pH2': 0.0,
         'pHe': 5.24e-6,
-        'pN2': 0.78084,
-        'pO2': 0.20946,
-        'pCO2': 330.0e-6,
-        'pAr': 9.34e-3,
-        'pNe': 18.18e-6,
-        'pKr': 1.14e-6,
-        'pH2O': 0.01,
-        'pCH4': 0.0
 }
 
 gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
 
 for param in gas_params:
-    planet_params[param] *= PRESSURE_FRACTION
+    if param in planet_params:
+        planet_params[param] *= PRESSURE_FRACTION
+
+m_c = 0.325 * MASS_RATIO * mearth
+r_c = calc_r_c(m_c)
+r_rcb = 2 * r_c
+t_eq = 255
+planet_params['pHe'] = calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb)
 
 r_new = piecewise_radius_estimate()
 g_new = 9.80665 * MASS_RATIO / (r_new ** 2)
