@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from constants import pi, stefan, rearth, mearth, lsol, au_m, Gsi, k_B
 import numpy as np
 import sys
+from scipy.integrate import quad
 
 def calc_t_eq(l_star, a):
     numerator = l_star
@@ -9,15 +10,29 @@ def calc_t_eq(l_star, a):
     
     return (numerator/denominator) ** (1/4)
 
+# def piecewise_radius_estimate(m_p):
+#     return 1.02 * (m_p**0.27)
+
 def piecewise_radius_estimate(m_p):
-    return 1.02 * (m_p**0.27)
+    if m_p < 4.37:
+        return 1.02 * (m_p**0.27) * rearth
+    # Intermediate-mass planets
+    # H/He envelopes no longer neglible, so radius grows faster with mass than before
+    if m_p < 127:
+        return 0.56 * (m_p**0.67) * rearth
+    # Massive planets, mass dominated by light gas.
+    # Radius becomes almost constant and independent of mass
+    # This gas is semi-degenerate, leading to the constant relation
+    return 18.6 * (m_p ** (-0.06)) * rearth
 
 # Equation 1 from https://lweb.cfa.harvard.edu/~lzeng/papers/Zeng2016b.pdf
 def calc_cmf(m_p, r_p):
     constant_outer = 1/0.21
     constant_inner = 1.07
     rad_term = r_p/rearth
+    print(rad_term)
     m_term = m_p / mearth
+    print(m_term**0.27)
     exp = 0.27
     return constant_outer * (constant_inner - (rad_term/(m_term**exp)))
 
@@ -51,6 +66,18 @@ def calc_r_rcb(m_c, t_eq, r_c, f, epsilon=0.03):
     left_denom = r_c
     
     return (numerator/denominator) * r_c
+
+# Gamme = 7/5 is assumed in the paper
+def calc_r_prime_b(r_b, gamma=7/5):
+    return (gamma - 1)/(2 * gamma) * r_b
+
+def calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b, gamma=4/3):
+    def integrand(r):
+        return (r ** 2) * (1 + r_prime_b / r - r_prime_b / r_rcb) ** (1 / (gamma - 1))
+    
+    integral_val, _ = quad(integrand, r_c, r_rcb)
+    
+    return 4 * pi * rho_rcb * integral_val
 
 # Equation 28
 def calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb):
@@ -105,7 +132,7 @@ for mass in range_over:
         m_c = mass * mearth
         
         # Override their assumptions with our own
-        r_p = piecewise_radius_estimate(mass*mearth)
+        r_p = piecewise_radius_estimate(mass)
         # m_c = calc_cmf(mass*mearth, r_p) * mass * mearth
         r_c = calc_r_c(m_c)
         
@@ -127,9 +154,9 @@ min_values = []
 for temp, f_ret_list in f_rets.items():
     min_values.append(min(f_ret_list))
 
-plt.vlines(calc_cmf(mearth, rearth), ymin=0, ymax=1, linestyles='dashed', color='k', label="Earth CMF")
-plt.xlim([0.1,10])
-plt.xticks([0.1] + list(range(1, 11)))
+plt.vlines(1, ymin=0, ymax=1, linestyles='dashed', color='k', label="Earth CMF")
+plt.xlim([0.5,10])
+plt.xticks([0.5] + list(range(1, 11)))
 plt.ylim([np.min(min_values),1])
 plt.yscale('log')
 plt.legend()
@@ -137,7 +164,7 @@ plt.legend()
 plt.xlabel(r'$\mathbf{M_c/M_{\oplus}}$')
 plt.ylabel(r'$\mathbf{f_{ret}}$')
 # plt.title("Retained H and He fraction by Planetary Mass")
-plt.title("Retained H and He fraction by Planetary Core Mass")
+plt.title('Retained H and He fraction by Planetary "Core" Mass')
 
 plt.show()
     

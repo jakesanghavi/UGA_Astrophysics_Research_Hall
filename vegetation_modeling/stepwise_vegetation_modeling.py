@@ -22,7 +22,7 @@ WET_SOIL = True
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO = 5
+MASS_RATIO = 2
 
 # Gas settings
 F_INIT = 0.05
@@ -91,7 +91,6 @@ for param in gas_params:
         planet_params[param] *= PRESSURE_FRACTION
 
 r_new = piecewise_radius_estimate()
-print(r_new)
 g_new = 9.80665 * MASS_RATIO / (r_new ** 2)
 
 planet_params['gravity'] = g_new
@@ -100,10 +99,10 @@ planet_params['radius'] = r_new
 m_c = 0.325 * MASS_RATIO * mearth
 r_c = calc_r_c(m_c)
 r_rcb = 2 * r_c
-t_eq = 1000
+t_eq = 500
 retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
-planet_params['pHe'] = 0.25 * retained_frac * (MASS_RATIO * mearth) ** 2 * F_INIT * Gsi / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
-planet_params['pH2'] = 0.75 * retained_frac * (MASS_RATIO * mearth) ** 2 * F_INIT * Gsi  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pHe'] = 0.25 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pH2'] = 0.75 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 
 # Create the model
 planet = exo.Model(
