@@ -22,10 +22,10 @@ WET_SOIL = True
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO = 2
+MASS_RATIO = 7
 
 # Gas settings
-F_INIT = 0.05
+F_INIT = 0.25
 
 # Estimate radius of the planet based on its mass
 # This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
@@ -99,7 +99,7 @@ planet_params['radius'] = r_new
 m_c = 0.325 * MASS_RATIO * mearth
 r_c = calc_r_c(m_c)
 r_rcb = 2 * r_c
-t_eq = 500
+t_eq = 255
 retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
 planet_params['pHe'] = 0.25 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 planet_params['pH2'] = 0.75 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)

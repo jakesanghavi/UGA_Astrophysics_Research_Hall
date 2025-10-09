@@ -3,6 +3,7 @@ from constants import pi, stefan, rearth, mearth, lsol, au_m, Gsi, k_B
 import numpy as np
 import sys
 from scipy.integrate import quad
+from scipy.interpolate import interp1d
 
 def calc_t_eq(l_star, a):
     numerator = l_star
@@ -147,6 +148,21 @@ for mass in range_over:
         
         f_rets[str(temp)].append(f_ret)
 
+def scale_f_rets(f_rets):
+    # Authors did not account for T = 255 properly, so we will scale things
+    anchor_mass = 2.0
+    anchor_temp = 255
+
+    f_interp = interp1d(range_over, f_rets[str(anchor_temp)], kind='linear', fill_value='extrapolate')
+    reference_value = f_interp(anchor_mass)
+
+    for temp in t_eqs:
+        f_rets[str(temp)] = np.array(f_rets[str(temp)]) / reference_value
+        
+    return f_rets
+
+f_rets = scale_f_rets(f_rets)
+
 for x in range(len(t_eqs)):
     plt.plot(range_over, f_rets[str(t_eqs[x])], c=colors[x], label=r"$T_{eq}$" + f"={t_eqs[x]} K")
     
@@ -159,6 +175,15 @@ plt.xlim([0.5,10])
 plt.xticks([0.5] + list(range(1, 11)))
 plt.ylim([np.min(min_values),1])
 plt.yscale('log')
+
+# Add 1 to the ticks
+yticks_vals = plt.yticks()[0]
+ylim_low, ylim_high = plt.ylim()
+yticks_i_want = [y for y in yticks_vals if ylim_low <= y <= ylim_high]
+yticks_i_want.append(1)
+plt.yticks(sorted(set(yticks_i_want)))
+plt.yticks(yticks_i_want)
+
 plt.legend()
 # plt.xlabel("Planetary Mass (" + r'$\mathbf{M_{\oplus}}$' + ")")
 plt.xlabel(r'$\mathbf{M_c/M_{\oplus}}$')

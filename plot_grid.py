@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.gridspec import GridSpec
 
-scale_factor = 10
+scale_factor = 1
 
 images = [f'vegetation_map_custom_earthlike_scaled_{scale_factor}_year_{x}.png' for x in range(1, 6)]
 
