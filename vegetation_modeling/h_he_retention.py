@@ -42,6 +42,7 @@ def calc_r_c(m_c, beta=4):
     term2 = rearth
     return term1 * term2
 
+# Equation given at the start of section 2.2
 def calc_r_B(m_c, t_eq, mu=2.2):
     m_u = 1.66053906660 * (10**(-27))
     numerator = 2 * Gsi * m_c * (mu * m_u)
@@ -68,8 +69,12 @@ def calc_r_rcb(m_c, t_eq, r_c, f, epsilon=0.03):
     
     return (numerator/denominator) * r_c
 
-# Gamme = 7/5 is assumed in the paper
-def calc_r_prime_b(r_b, gamma=7/5):
+# Density at R_rcb. Needed to calculate M_atm
+def calc_rho_rcb(r_b, r_rcb, rho_d=(10**(-6))):
+    return rho_d*np.exp(r_b/r_rcb - 1)
+
+# Gamma = 7/5 is assumed in the paper
+def calc_r_prime_b(r_b, gamma=4/3):
     return (gamma - 1)/(2 * gamma) * r_b
 
 def calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b, gamma=4/3):

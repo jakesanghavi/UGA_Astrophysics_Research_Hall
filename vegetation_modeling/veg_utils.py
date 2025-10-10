@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 from constants import pi, stefan, rearth, mearth, lsol, au_m, Gsi, k_B
 import numpy as np
 import sys
+from scipy.integrate import quad
+from scipy.interpolate import interp1d
 
 def calc_t_eq(l_star, a):
     numerator = l_star
@@ -9,15 +11,29 @@ def calc_t_eq(l_star, a):
     
     return (numerator/denominator) ** (1/4)
 
+# def piecewise_radius_estimate(m_p):
+#     return 1.02 * (m_p**0.27)
+
 def piecewise_radius_estimate(m_p):
-    return 1.02 * (m_p**0.27)
+    if m_p < 4.37:
+        return 1.02 * (m_p**0.27) * rearth
+    # Intermediate-mass planets
+    # H/He envelopes no longer neglible, so radius grows faster with mass than before
+    if m_p < 127:
+        return 0.56 * (m_p**0.67) * rearth
+    # Massive planets, mass dominated by light gas.
+    # Radius becomes almost constant and independent of mass
+    # This gas is semi-degenerate, leading to the constant relation
+    return 18.6 * (m_p ** (-0.06)) * rearth
 
 # Equation 1 from https://lweb.cfa.harvard.edu/~lzeng/papers/Zeng2016b.pdf
 def calc_cmf(m_p, r_p):
     constant_outer = 1/0.21
     constant_inner = 1.07
     rad_term = r_p/rearth
+    print(rad_term)
     m_term = m_p / mearth
+    print(m_term**0.27)
     exp = 0.27
     return constant_outer * (constant_inner - (rad_term/(m_term**exp)))
 
@@ -29,7 +45,7 @@ def calc_r_c(m_c, beta=4):
 def calc_r_B(m_c, t_eq, mu=2.2):
     m_u = 1.66053906660 * (10**(-27))
     numerator = 2 * Gsi * m_c * (mu * m_u)
-    denominator = k_B * t_eq
+    denominator = k_B * t_eq*100
     
     return numerator/denominator
 
@@ -51,6 +67,22 @@ def calc_r_rcb(m_c, t_eq, r_c, f, epsilon=0.03):
     left_denom = r_c
     
     return (numerator/denominator) * r_c
+
+# Density at R_rcb. Needed to calculate M_atm
+def calc_rho_rcb(r_b, r_rcb, rho_d=(10**(-6))):
+    return rho_d*np.exp(r_b/r_rcb - 1)
+
+# Gamma = 7/5 is assumed in the paper
+def calc_r_prime_b(r_b, gamma=4/3):
+    return (gamma - 1)/(2 * gamma) * r_b
+
+def calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b, gamma=4/3):
+    def integrand(r):
+        return (r ** 2) * (1 + r_prime_b / r - r_prime_b / r_rcb) ** (1 / (gamma - 1))
+    
+    integral_val, _ = quad(integrand, r_c, r_rcb)
+    
+    return 4 * pi * rho_rcb * integral_val
 
 # Equation 28
 def calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb):
@@ -90,32 +122,3 @@ def calc_f_ret_small_rcb(m_c, t_eq, r_c, r_b, r_rcb):
     left_denom = 0.01
     
     return term1 * np.exp(exp_term) * left_denom
-    
-t_eqs = [255, 500, 1000, 1500, 2000]
-f_rets = {str(v): [] for v in t_eqs}
-range_over = np.arange(0.1, 10.1, 0.1)
-colors = ['purple', 'b', 'orange', 'g', 'red']
-for mass in range_over:
-    for temp in t_eqs:
-        # t_eq = calc_t_eq(lsol, au_m)
-        t_eq = temp
-        
-        # This is an assumption made in the paper
-        # m_c = 4 * mearth
-        m_c = mass * mearth
-        
-        # Override their assumptions with our own
-        # r_p = piecewise_radius_estimate(mass*mearth)
-        # m_c = calc_cmf(mass*mearth, r_p) * mass * mearth
-        r_c = calc_r_c(m_c)
-        
-        # This is another assumption made in the paper
-        # r_rcb requires f to calculate, but f also depends on r_rcb
-        r_rcb = 2 * r_c
-        
-        f_ret = calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb)
-        
-        # r_b = calc_r_B(m_c, t_eq)
-        # f_ret = calc_f_ret_small_rcb(m_c, t_eq, r_c, r_b, r_rcb)
-        
-        f_rets[str(temp)].append(f_ret)

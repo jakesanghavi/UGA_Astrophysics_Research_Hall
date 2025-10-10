@@ -1,7 +1,7 @@
 import exoplasim as exo
 import numpy as np
 from matplotlib import pyplot as plt
-from veg_utils import calc_f_ret_big_rcb, calc_r_c
+from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b
 from constants import mearth, Gsi, pi, rearth
 import sys
 
@@ -25,7 +25,7 @@ PRESSURE_FRACTION = 1
 MASS_RATIO = 7
 
 # Gas settings
-F_INIT = 0.25
+F_INIT = 0.15
 
 # Estimate radius of the planet based on its mass
 # This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
@@ -95,14 +95,35 @@ g_new = 9.80665 * MASS_RATIO / (r_new ** 2)
 
 planet_params['gravity'] = g_new
 planet_params['radius'] = r_new
+print(r_new)
 
-m_c = 0.325 * MASS_RATIO * mearth
+# m_c = None
+# m_atm = None
+# if r_new <= 1.5 * rearth:
+#     m_c = MASS_RATIO * mearth
+#     m_atm = 8.6 * 10 **(-7) * MASS_RATIO * mearth
+# else:
+#     m_c = 0.95 * MASS_RATIO * mearth
+#     m_atm = 0.03 * MASS_RATIO * mearth
+m_c = MASS_RATIO * mearth
 r_c = calc_r_c(m_c)
 r_rcb = 2 * r_c
 t_eq = 255
+r_b = calc_r_B(m_c, t_eq)
+rho_rcb = calc_rho_rcb(r_b, r_rcb)
+r_prime_b = calc_r_prime_b(r_b)
+m_atm = calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b)
+F = m_atm/m_c
 retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
-planet_params['pHe'] = 0.25 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
-planet_params['pH2'] = 0.75 * retained_frac * Gsi * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pHe'] = 0.25 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+print(planet_params['pHe'])
+print(F)
+print(r_b)
+print(r_rcb)
+print(r_b/rearth)
+print(rho_rcb)
+sys.exit()
+planet_params['pH2'] = 0.75 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 
 # Create the model
 planet = exo.Model(
