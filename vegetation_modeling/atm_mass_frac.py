@@ -47,8 +47,9 @@ def Lxuv_track(t, Lxuv0=1e22, t_sat=100e6*year, decay_index=1.1):
 # ============================================================
 # Initial envelope (Lee & Chiang)
 # ============================================================
-def initial_GCR(Mc_mearth, t_disk_Myr=3.0, Z=0.02, dusty=True):
-    return 0.05
+# Mc_mearth, t_disk_Myr=3.0, Z=0.02, dusty=True
+def initial_GCR(init=0.05):
+    return init
 
 # ============================================================
 # Boil-off (Owen & Wu heuristic)
@@ -85,7 +86,7 @@ def core_powered_loss(L, g, Rc):
 # ============================================================
 # Bondi-limited timescale
 # ============================================================
-def bondi_timescale(Matm, Mc_kg, Rc, T, mu=2.3):
+def bondi_timescale(Matm, Mc_kg, Rc, T, mu=2.2):
     cs = np.sqrt(k * T / (mu * m_p))
     R_B = G * Mc_kg / cs**2
     rho = Matm / (4/3 * pi * Rc**3)
@@ -115,7 +116,7 @@ def planet_radius(Rc, Mc_kg, Matm):
 # Atmosphere evolution
 # ============================================================
 def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
-                      Z=0.02, dusty=True, mu=2.3, eta=0.1,
+                      Z=0.02, dusty=True, init=0.05, mu=2.2, eta=0.1,
                       Lxuv0=3e22, t_sat_Myr=100, decay_index=1.1,
                       show_progress=False):
 
@@ -124,7 +125,8 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
     T_eq = (L_sun / (16 * pi * (a_AU*AU)**2 * sigma))**0.25
 
     # Initial envelope
-    GCR0 = initial_GCR(Mc_me, t_disk_Myr, Z, dusty)
+    # GCR0 = initial_GCR(Mc_me, t_disk_Myr, Z, dusty)
+    GCR0=initial_GCR(init)
     Matm = apply_boiloff(GCR0*Mc_kg, Mc_kg, Rc, T_eq, mu)
 
     t = t_disk_Myr*1e6*year
@@ -172,11 +174,11 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
 # Run and plot
 # ============================================================
 def run_planet_model(Mc_me=5.0, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
-                     Z=0.02, dusty=True, eta=0.15, Lxuv0=3e22,
+                     Z=0.02, dusty=True, init=0.05, mu=2.2, eta=0.1, Lxuv0=3e22,
                      t_sat_Myr=100, decay_index=1.1):
 
     times, GCRs = evolve_atmosphere(Mc_me, a_AU, t_disk_Myr, t_end_Gyr,
-                                    Z, dusty, 2.3, eta,
+                                    Z, init, dusty, mu, eta,
                                     Lxuv0, t_sat_Myr, decay_index)
 
     plt.figure(figsize=(7,4))
@@ -200,8 +202,9 @@ if __name__ == "__main__":
         a_AU=0.5,
         t_disk_Myr=3.0,
         t_end_Gyr=5.0,
+        init=0.05,
         dusty=True,
-        eta=0.15,
+        eta=0.1,
         Lxuv0=3e22,
         t_sat_Myr=100,
         decay_index=1.1
