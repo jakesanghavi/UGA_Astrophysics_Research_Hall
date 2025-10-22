@@ -6,7 +6,7 @@ from constants import mearth, Gsi, pi, rearth
 import sys
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 5
+N_YEARS = 1
 RESOLUTION = 'T21'
 NCPUS = 4
 NLAYERS = 10
@@ -22,7 +22,7 @@ WET_SOIL = True
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO = 7
+MASS_RATIO = 1
 
 # Gas settings
 F_INIT = 0.15
@@ -51,13 +51,13 @@ def model_earthlike_stepwise(planet, year):
 
     # Have to open and close figure if doing it in a loop
     plt.figure(figsize=(8,4))
-    plt.pcolormesh(lon, lat, veg, cmap='viridis', shading='gouraud')
+    plt.pcolormesh(lon, lat, veg, cmap='viridis', shading='gouraud', vmin=0.0, vmax=0.03)
     plt.colorbar(label="Vegetation rate")
     plt.xlabel("Longitude [deg]")
     plt.ylabel("Latitude [deg]")
     plt.title(
         f"Planetary Vegetation - Earthlike Planet Scaled by {MASS_RATIO}\n"
-        f"Year: {year}"
+        # f"Year: {year}"
     )
 
     filename = f"vegetation_map_custom_earthlike_scaled_{MASS_RATIO}_year_{year}.png"
@@ -112,18 +112,15 @@ t_eq = 255
 r_b = calc_r_B(m_c, t_eq)
 rho_rcb = calc_rho_rcb(r_b, r_rcb)
 r_prime_b = calc_r_prime_b(r_b)
-m_atm = calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b)
-F = m_atm/m_c
+# m_atm = calc_m_atm(rho_rcb, r_c, r_rcb, r_prime_b)
+# F = m_atm/m_c
+F_map = {(0.05, 1): 10 ** (-8), (0.05, 2): 0.001, (0.05, 5): 0.011, (0.05, 10): 0.014,
+         (0.10, 1): 10 ** (-8), (0.10, 2): 0.005, (0.10, 5): 0.027, (0.10, 10): 0.038,
+         (0.15, 1): 10 ** (-8), (0.15, 2): 0.011, (0.15, 5): 0.045, (0.15, 10): 0.064}
+F = F_map[(F_INIT, MASS_RATIO)]
 retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
-planet_params['pHe'] = 0.25 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
-print(planet_params['pHe'])
-print(F)
-print(r_b)
-print(r_rcb)
-print(r_b/rearth)
-print(rho_rcb)
-sys.exit()
-planet_params['pH2'] = 0.75 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * F_INIT * 10 ** (-4) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pHe'] = 0.25 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+planet_params['pH2'] = 0.75 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 
 # Create the model
 planet = exo.Model(

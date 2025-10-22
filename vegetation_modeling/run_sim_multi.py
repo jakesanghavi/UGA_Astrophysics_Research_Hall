@@ -7,7 +7,7 @@ from atm_mass_frac import evolve_atmosphere
 Mc_array = [1, 2, 5, 10]
 a_array  = [0.1, 0.5, 1, 2, 5, 10, 25]
 eta = 0.1
-init = 0.05
+init = 0.15
 
 # 2x2
 fig, axes = plt.subplots(2, 2, figsize=(12,8))
@@ -79,4 +79,5 @@ for i, Mc in enumerate(Mc_array):
 
 plt.suptitle(fr"Atmospheric Mass Ratio - Initial $H_2$ Concentration = {init}")
 plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.savefig(f"{init}.png")
 plt.show()
