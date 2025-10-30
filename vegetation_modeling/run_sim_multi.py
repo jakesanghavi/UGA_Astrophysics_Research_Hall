@@ -7,7 +7,7 @@ from atm_mass_frac import evolve_atmosphere
 Mc_array = [1, 2, 5, 10]
 a_array  = [0.1, 0.5, 1, 2, 5, 10, 25]
 eta = 0.1
-init = 0.15
+init = 0.1
 
 # 2x2
 fig, axes = plt.subplots(2, 2, figsize=(12,8))
@@ -26,7 +26,7 @@ for Mc in Mc_array:
             init=init,
             dusty=True,
             eta=eta,
-            Lxuv0=3e22,
+            Lxuv0=1e20,
             t_sat_Myr=100,
             decay_index=1.1
         )
@@ -50,7 +50,7 @@ for i, Mc in enumerate(Mc_array):
             init=init,
             dusty=True,
             eta=eta,
-            Lxuv0=3e22,
+            Lxuv0=1e22,
             t_sat_Myr=100,
             decay_index=1.1
         )
@@ -64,8 +64,10 @@ for i, Mc in enumerate(Mc_array):
     ax.set_xlim(x_min, x_max)
     
     # ylim very annoying
-    y_min_pow10 = 10**np.floor(np.log10(y_min))
-    y_max_pow10 = 10**np.ceil(np.log10(y_max))
+    # y_min_pow10 = 10**np.floor(np.log10(y_min))
+    # y_max_pow10 = 10**np.ceil(np.log10(y_max))
+    y_min_pow10 = 10**(-4)
+    y_max_pow10 = 10 ** (-0.5)
     ax.set_ylim(y_min_pow10, y_max_pow10)
     
     # Major ticks at powers of 10 only

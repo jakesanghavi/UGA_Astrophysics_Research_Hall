@@ -17,19 +17,22 @@ NLAYERS = 10
 PRECISION = 8
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
-AU=1
+MIN_AU=0.75
+MAX_AU=5
+AU_STEP_SIZE=0.25
 
 # Vegetation settings
 VEGETATION = 2
 VEGACCEL = 1
 INIT_GROWTH = 0.5
 WET_SOIL = True
+BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MIN_MASS_RATIO = 1
-MAX_MASS_RATIO = 10
-STEP_SIZE = 0.1
+MIN_MASS_RATIO = 0.5
+MAX_MASS_RATIO = 8
+MASS_STEP_SIZE = 0.25
 
 # Gas settings
 F_INIT = 0.15
@@ -99,12 +102,14 @@ for param in gas_params:
         planet_params[param] *= PRESSURE_FRACTION
 
 
-def calculate_veg(mass_ratio):
+def calculate_veg(mass_ratio, au):
     r_new = piecewise_radius_estimate(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
 
     planet_params['gravity'] = g_new
     planet_params['radius'] = r_new
+    planet_params['flux'] = BASE_FLUX / (au**2)
+    planet_params['startemp'] = 5778
 
     m_c = mass_ratio * mearth
     r_c = calc_r_c(m_c)
@@ -115,29 +120,31 @@ def calculate_veg(mass_ratio):
     r_prime_b = calc_r_prime_b(r_b)
 
     retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
-    time, GCRs = evolve_atmosphere(
+    times, GCRs = evolve_atmosphere(
                 Mc_me=mass_ratio,
-                a_AU=AU,
+                a_AU=au,
                 t_disk_Myr=3.0,
                 t_end_Gyr=5.0,
                 init=F_INIT,
                 dusty=True,
                 eta=0.1,
-                Lxuv0=3e22,
+                Lxuv0=1e22,
                 t_sat_Myr=100,
                 decay_index=1.1
             )
 
-    target_time = 4.5 * 10**9
-    mask = time > target_time
+    # Targeting a time of 2 Gyr
+    target_time = 2 * 10**9
+    mask = times > target_time
     target_index = np.argmax(mask)
     F = GCRs[target_index]
-    print(f"""------
-          {mass_ratio} - {F}
-          -------
-          """)
-    planet_params['pHe'] = 0.25 * retained_frac * Gsi * F * (mass_ratio * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
-    planet_params['pH2'] = 0.75 * retained_frac * Gsi * F * (mass_ratio * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+    
+    # If time is greater than max time, that means there has been no gas retained
+    # as the simulation stops when M_atm == 0
+    if target_index <= 0:
+        F = 0
+    planet_params['pHe'] = 0.25 * Gsi * F * (mass_ratio * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+    planet_params['pH2'] = 0.75 * Gsi * F * (mass_ratio * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 
     try:
         shutil.rmtree("custom_earthlike_model")
@@ -175,16 +182,18 @@ def calculate_veg(mass_ratio):
         
 output_dict = {}
 with keep.presenting():
-    # for mr in range(MIN_MASS_RATIO, MAX_MASS_RATIO+1, STEP_SIZE):
-    for mr in [0.1, 0.5, 0.8]:
-        try:
-            veg_amt = calculate_veg(mr)
-            output_dict[str(mr)] = [float(v) for v in veg_amt]
-            with open(f"veg_json_init_f_{F_INIT}_step_{STEP_SIZE}.json", "w") as f:
-                json.dump(output_dict, f, indent=4)
-        except Exception as e:
-            print(f"Error!: {e}")
-            print(mr)
-            sys.exit()
+    masses = np.arange(MIN_MASS_RATIO, MAX_MASS_RATIO, MASS_STEP_SIZE)
+    aus = np.arange(MIN_AU, MAX_AU, AU_STEP_SIZE)
+    for mr in masses:
+        for au in aus:
+            try:
+                veg_amt = calculate_veg(mr, au)
+                output_dict[str(mr)] = [float(v) for v in veg_amt]
+                with open(f"veg_json_FI_{F_INIT}_MS_{MASS_STEP_SIZE}_AUS_{AU_STEP_SIZE}.json", "w") as f:
+                    json.dump(output_dict, f, indent=4)
+            except Exception as e:
+                print(f"Error!: {e}")
+                print(mr)
+                sys.exit()
     
 print(output_dict)
