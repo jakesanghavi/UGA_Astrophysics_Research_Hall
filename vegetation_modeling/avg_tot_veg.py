@@ -17,7 +17,7 @@ NLAYERS = 10
 PRECISION = 8
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
-MIN_AU=0.75
+MIN_AU=1
 MAX_AU=5
 AU_STEP_SIZE=0.25
 
@@ -30,8 +30,8 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MIN_MASS_RATIO = 0.5
-MAX_MASS_RATIO = 8
+MIN_MASS_RATIO = 1
+MAX_MASS_RATIO = 10
 MASS_STEP_SIZE = 0.25
 
 # Gas settings
@@ -139,12 +139,20 @@ def calculate_veg(mass_ratio, au):
     target_index = np.argmax(mask)
     F = GCRs[target_index]
     
+    print(F)
+    print(r_new)
+    print(retained_frac)
+    
     # If time is greater than max time, that means there has been no gas retained
     # as the simulation stops when M_atm == 0
     if target_index <= 0:
         F = 0
-    planet_params['pHe'] = 0.25 * Gsi * F * (mass_ratio * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
-    planet_params['pH2'] = 0.75 * Gsi * F * (mass_ratio * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
+    planet_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4)
+    planet_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4)
+    
+    print(planet_params['pHe'])
+    print(planet_params['pH2'])
+    sys.exit()
 
     try:
         shutil.rmtree("custom_earthlike_model")

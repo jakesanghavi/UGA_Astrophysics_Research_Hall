@@ -86,10 +86,10 @@ def core_powered_loss(L, g, Rc):
 # ============================================================
 # Bondi-limited timescale
 # ============================================================
-def bondi_timescale(Matm, Mc_kg, Rc, T, mu=2.2):
+def bondi_timescale(Matm, Mc_kg, Rp, T, mu=2.2):
     cs = np.sqrt(k * T / (mu * m_p))
     R_B = G * Mc_kg / cs**2
-    rho = Matm / (4/3 * pi * Rc**3)
+    rho = Matm / (4/3 * pi * Rp**3)
     mdot_B = 4 * pi * R_B**2 * rho * cs
     return Matm / max(mdot_B,1e-20)
 
@@ -140,7 +140,7 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
 
         # Cooling and Bondi times
         L, t_cool = cooling_luminosity(Matm, Mc_kg, Rc)
-        t_B = bondi_timescale(Matm, Mc_kg, Rc, T_eq, mu)
+        t_B = bondi_timescale(Matm, Mc_kg, Rp, T_eq, mu)
 
         # Core-powered loss only if faster than Bondi limit
         if t_cool < t_B:
