@@ -6,8 +6,10 @@ from atm_mass_frac import evolve_atmosphere
 # Param grid
 Mc_array = [1, 2, 5, 10]
 a_array  = [0.1, 0.5, 1, 2, 5, 10, 25]
-eta = 0.1
-init = 0.05
+# Mc_array = [1]
+# a_array = [1]
+eta = 0.3
+init = 0.15
 
 # 2x2
 fig, axes = plt.subplots(2, 2, figsize=(12,8))
