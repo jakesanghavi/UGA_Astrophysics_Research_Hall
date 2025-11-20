@@ -32,7 +32,7 @@ isochrone_file = '5interpolated_seiss_1E9'
 filename = isochrone_file + '.dat'
 
 F_INIT = 0.15
-MP = 1
+MP = 1.5
 
 json_file = f'wave_veg_json_FI_{F_INIT}_MP_{MP}.json'
 

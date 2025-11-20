@@ -21,7 +21,7 @@ NLAYERS = 10
 PRECISION = 8
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
-# AUS = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
+# MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
 AUS = [0.1, 0.25, 0.5, 1, 1.5, 2]
 
 # Vegetation settings
@@ -33,7 +33,7 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO=0.1
+MASS_RATIO=0.15
 MSTARS = [0.1, 0.4, 0.7, 1, 1.2]
 
 # Gas settings
