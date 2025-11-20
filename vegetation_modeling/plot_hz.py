@@ -15,6 +15,10 @@ import copy
 import math
 import scipy.interpolate
 import pandas as pd
+import json
+from scipy.interpolate import RegularGridInterpolator
+import matplotlib.colors as mcolors
+import sys
 
 
 #Open the billion year old seiss model. Warning - I cut off all masses with Teff above 7200K because of
@@ -26,6 +30,34 @@ you delete spectral type")
 #Using a file with fewer interpolations runs faster
 isochrone_file = '5interpolated_seiss_1E9'
 filename = isochrone_file + '.dat'
+
+F_INIT = 0.15
+MP = 1
+
+json_file = f'wave_veg_json_FI_{F_INIT}_MP_{MP}.json'
+
+# Load your JSON
+with open(json_file, "r") as f:
+    data = json.load(f)
+    
+veg_data = {str(mr): {str(au): vals for au, vals in inner.items()} 
+              for mr, inner in data.items()}
+
+# Get rid of non-floats
+new_veg_data = {
+    # Outer Key Normalization:
+    str(float(outer_k)) if math.floor(float(outer_k)) == math.ceil(float(outer_k)) else outer_k: 
+    {
+        # Inner Key Normalization:
+        str(float(inner_k)) if math.floor(float(inner_k)) == math.ceil(float(inner_k)) else inner_k: inner_v
+        for inner_k, inner_v in inner_dict.items()
+    }
+    for outer_k, inner_dict in veg_data.items()
+}
+
+veg_data = new_veg_data
+del new_veg_data
+            
 
 AU = 149597870700
 AU_cgs = AU*100.0
@@ -128,8 +160,6 @@ with open(filename) as f:
 
         rstar.append(float(columns[1]) * Rsol)
         
-print(mstar)
-
 #Make it a square distribution (maybe multiply by 20)
 nsample_aplanet = len(mstar)*10
 
@@ -291,151 +321,213 @@ if(do_smoothing):
 # print np.shape(threshold_x_min)
 
 
-# fig, ax = plt.subplots()
+# # fig, ax = plt.subplots()
+# fig = plt.figure(figsize=(12, 9))
+# ax = fig.add_subplot(111)
+# plt.rcParams['legend.numpoints'] = 1
+# # ax.loglog()
+# #ax.semilogy()
+
+
+# plt.xscale('log')
+# plt.yscale('log')
+
+# minx = 0.02
+# maxx = 10.0
+
+# miny = 0.1
+# maxy = 1.9
+
+# axes = 22
+# ticks = 18
+# legend = 18
+# title = 22
+
+# plt.xlim(minx,maxx)
+# plt.ylim(miny,maxy)
+
+# from matplotlib import rc,rcParams
+# # # activate latex text rendering
+# rc('text', usetex=True)
+
+# blue_fill = plt.scatter([], [], marker='s', color='dodgerblue', label='Habitable Zone',alpha=0.95,s=200)
+
+# #Label the plot with the respiration rate etc
+# #plt.text(0.03, 0.9, 'text', fontweight='bold',size=20)
+
+# #Deactivate the latex rendering after we have made the markers or it won't behave
+# rc('text', usetex=False)
+
+# # # # Fill
+# x1 = runaway_greenhouse.copy()
+# x2 = maximum_greenhouse.copy()
+# x3 = np.array(threshold_x_min)
+# x4 = np.array(threshold_x_max)
+
+# xfill = np.sort(np.concatenate([x1, x2, x3, x4]))
+# y1fill = np.interp(xfill, x1, mstar)
+# y2fill = np.interp(xfill, x2, mstar)
+
+# #crimson
+# photocolor = 'crimson'
+
+# # HZ
+# plt.fill_between(xfill, y1fill, y2fill, where=(y1fill > y2fill),
+#                   interpolate=True, color='dodgerblue', alpha=0.2)
+
+# makeplot = True
+
+# if(makeplot):
+
+#     #Do the actual plotting below here
+#     plotfont = 25
+
+#     #plt.title("The biosignature zone",  fontsize=plotfont,fontweight='bold')
+#     #plt.title("%s"%scenario,  fontsize=plotfont,fontweight='bold')
+#     plt.xlabel('Planet semi-major axis [au]', fontsize=plotfont,fontweight='bold')
+#     plt.ylabel(r'Host star mass [M$_\odot$]',  fontsize=plotfont,fontweight='bold')
+#     #plt.yticks(fontsize=ticks)
+#     #plt.xticks(fontsize=ticks)
+
+#     # Change legend fontsize
+#     matplotlib.rcParams['legend.fontsize'] = 20
+
+
+#     legend_properties = {'weight':'bold'}
+#     #plt.legend(loc='lower right',prop=legend_properties,framealpha=1.0)
+
+#     # These just plot nice thick lines on top of the existing axis
+#     ax.axhline(linewidth=8,y=maxy,color='k')
+#     ax.axhline(linewidth=8,y=miny,color='k')
+#     ax.axvline(linewidth=8,x=maxx,color='k')
+#     ax.axvline(linewidth=8,x=minx,color='k')
+
+#     from matplotlib import rc,rcParams
+#     # # activate latex text rendering
+#     # rc('text', usetex=True)
+#     rc('axes', linewidth=2)
+#     rc('font', weight='bold')
+#     plt.rcParams["axes.labelweight"] = "bold"
+#             #Make everything bold
+#     plt.rcParams["font.weight"] = "bold"
+#     plt.rcParams["axes.labelweight"] = "bold"
+
+
+#     #Set the tick labels to be bold here
+#     plt.setp(ax.get_yticklabels(), fontweight="bold")
+#     plt.setp(ax.get_xticklabels(), fontweight="bold")
+
+#     # rcParams['text.latex.preamble'] = [r'\usepackage{sfmath} \boldmath']
+
+#     # Set everything for major and minor ticks
+#     ax.tick_params(direction='in',colors='k',length=24, width=4,which='major',labelcolor='k')
+#     ax.tick_params(direction='in',colors='k',length=10, width=4,which='minor',labelcolor='k')
+
+#     # Put the tick params on all axes, and pad the ticks away from the plot
+#     ax.tick_params(top=True,right=True,which='both',pad=15)
+
+#     ax.xaxis.set_tick_params(labelsize=plotfont)
+#     ax.yaxis.set_tick_params(labelsize=plotfont)
+
+
+
+#     plt.tight_layout()
+
+
+#     # order = [3, 4, 5, 0, 1, 2]
+#     # handles, labels = plt.gca().get_legend_handles_labels()
+#     # plt.legend([handles[idx] for idx in order], [labels[idx] for idx in order],
+#     #            loc='lower right',legend
+#     #            fontsize=legend)
+
+
+#     savestring =  './' + isochrone_file + "_hz_only"
+#     filename= savestring + ".pdf"
+
+#     print("filename",filename)
+#     plt.savefig(filename,  bbox_inches='tight', format='pdf')
+
+
+#     outputname = savestring+'.eps'
+
+
+
+#     plt.show()
+#     plt.close()
+
+# Convert veg_data to sorted arrays for interpolator
+m_keys = sorted([float(k) for k in veg_data.keys()])
+a_keys = sorted([float(k) for k in veg_data[str(m_keys[0])].keys()])
+
+
+# Build 2D array of veg_data (first element)
+Z_data = np.array([[veg_data[str(m)][str(a)][0] for a in a_keys] for m in m_keys])
+
+# Interpolator
+interp_func = RegularGridInterpolator((m_keys, a_keys), Z_data, bounds_error=False, fill_value=0)
+
+# Create full mesh for plotting
+X, Y = np.meshgrid(a_planet/AU, mstar)  # X in AU, Y in M_sol
+
+# Evaluate veg_data on mesh
+Z = interp_func(np.stack((Y, X), axis=-1))
+
+print(Z_data)
+
+runaway_interp = np.interp(Y[:,0], mstar, runaway_greenhouse)
+maximum_interp = np.interp(Y[:,0], mstar, maximum_greenhouse)
+
+# Broadcast to X shape
+HZ_mask = (X >= runaway_interp[:, np.newaxis]) & (X <= maximum_interp[:, np.newaxis])
+# Z[~HZ_mask] = 0
+
+Z_masked = np.ma.masked_where(~HZ_mask, Z)
+valid_values = Z_masked.compressed()
+
+# Custom colormap: red -> yellow -> green
+cmap = mcolors.LinearSegmentedColormap.from_list("veg_map", ["red", "yellow", "green"])
+norm = mcolors.LogNorm(vmin=1e-10, vmax=1e-9)
+
+# Plotting
 fig = plt.figure(figsize=(12, 9))
 ax = fig.add_subplot(111)
-plt.rcParams['legend.numpoints'] = 1
-# ax.loglog()
-#ax.semilogy()
-
 
 plt.xscale('log')
 plt.yscale('log')
+plt.xlabel('Planet semi-major axis [au]', fontsize=16, fontweight='bold')
+plt.ylabel(r'Host star mass [M$_\odot$]', fontsize=16, fontweight='bold')
+plt.xlim(0.02, 10)
+plt.ylim(0.1, 1.9)
 
-minx = 0.02
-maxx = 10.0
+# Plot interpolated veg_data
+# pcm = ax.pcolormesh(X, Y, Z, cmap=cmap, norm=norm, shading='auto')
+pcm = ax.pcolormesh(X, Y, Z_masked, cmap=cmap, norm=norm, shading='auto')
+cbar = plt.colorbar(pcm, ax=ax)
+cbar.set_label(r'GPP [kg C $\mathbf{m^{-2}s^{-1}}$]', fontsize=16, fontweight='bold')
 
-miny = 0.1
-maxy = 1.9
+# Overlay habitable zone lines
+ax.plot(runaway_greenhouse, mstar, c='blue', lw=3, label='HZ Inner')
+ax.plot(maximum_greenhouse, mstar, c='blue', lw=3, label='HZ Outer')
 
-axes = 22
-ticks = 18
-legend = 18
-title = 22
+# Optional: semi-transparent fill behind HZ
+ax.fill_betweenx(mstar, runaway_greenhouse, maximum_greenhouse,
+                 color='dodgerblue', alpha=0.1)
 
-plt.xlim(minx,maxx)
-plt.ylim(miny,maxy)
+# Ticks and styling
+ax.tick_params(direction='in', length=24, width=4, which='major', colors='k')
+ax.tick_params(direction='in', length=10, width=4, which='minor', colors='k')
+ax.tick_params(top=True, right=True, which='both', pad=15)
+ax.set_title(
+    f"Average Gross Primary Production for \n a {MP} M$_\\oplus$ Planet in the Habitable Zone",
+    fontsize=20,
+    fontweight='bold'
+)
+plt.setp(ax.get_yticklabels(), fontweight="bold")
+plt.setp(ax.get_xticklabels(), fontweight="bold")
+plt.tight_layout()
 
-from matplotlib import rc,rcParams
-# # activate latex text rendering
-rc('text', usetex=True)
-
-
-
-
-
-blue_fill = plt.scatter([], [], marker='s', color='dodgerblue', label='Habitable Zone',alpha=0.95,s=200)
-
-
-
-
-#Label the plot with the respiration rate etc
-#plt.text(0.03, 0.9, 'text', fontweight='bold',size=20)
-
-#Deactivate the latex rendering after we have made the markers or it won't behave
-rc('text', usetex=False)
-
-# # # Fill
-x1 = runaway_greenhouse.copy()
-x2 = maximum_greenhouse.copy()
-x3 = np.array(threshold_x_min)
-x4 = np.array(threshold_x_max)
-
-xfill = np.sort(np.concatenate([x1, x2, x3, x4]))
-y1fill = np.interp(xfill, x1, mstar)
-y2fill = np.interp(xfill, x2, mstar)
-
-
-
-#crimson
-photocolor = 'crimson'
-
-
-
-
-
-# HZ
-plt.fill_between(xfill, y1fill, y2fill, where=(y1fill > y2fill),
-                  interpolate=True, color='dodgerblue', alpha=0.2)
-
-
-
-makeplot = True
-
-if(makeplot):
-
-    #Do the actual plotting below here
-    plotfont = 25
-
-    #plt.title("The biosignature zone",  fontsize=plotfont,fontweight='bold')
-    #plt.title("%s"%scenario,  fontsize=plotfont,fontweight='bold')
-    plt.xlabel('Planet semi-major axis [au]', fontsize=plotfont,fontweight='bold')
-    plt.ylabel(r'Host star mass [M$_\odot$]',  fontsize=plotfont,fontweight='bold')
-    #plt.yticks(fontsize=ticks)
-    #plt.xticks(fontsize=ticks)
-
-    # Change legend fontsize
-    matplotlib.rcParams['legend.fontsize'] = 20
-
-
-    legend_properties = {'weight':'bold'}
-    #plt.legend(loc='lower right',prop=legend_properties,framealpha=1.0)
-
-    # These just plot nice thick lines on top of the existing axis
-    ax.axhline(linewidth=8,y=maxy,color='k')
-    ax.axhline(linewidth=8,y=miny,color='k')
-    ax.axvline(linewidth=8,x=maxx,color='k')
-    ax.axvline(linewidth=8,x=minx,color='k')
-
-    from matplotlib import rc,rcParams
-    # # activate latex text rendering
-    # rc('text', usetex=True)
-    rc('axes', linewidth=2)
-    rc('font', weight='bold')
-    plt.rcParams["axes.labelweight"] = "bold"
-            #Make everything bold
-    plt.rcParams["font.weight"] = "bold"
-    plt.rcParams["axes.labelweight"] = "bold"
-
-
-    #Set the tick labels to be bold here
-    plt.setp(ax.get_yticklabels(), fontweight="bold")
-    plt.setp(ax.get_xticklabels(), fontweight="bold")
-
-    # rcParams['text.latex.preamble'] = [r'\usepackage{sfmath} \boldmath']
-
-    # Set everything for major and minor ticks
-    ax.tick_params(direction='in',colors='k',length=24, width=4,which='major',labelcolor='k')
-    ax.tick_params(direction='in',colors='k',length=10, width=4,which='minor',labelcolor='k')
-
-    # Put the tick params on all axes, and pad the ticks away from the plot
-    ax.tick_params(top=True,right=True,which='both',pad=15)
-
-    ax.xaxis.set_tick_params(labelsize=plotfont)
-    ax.yaxis.set_tick_params(labelsize=plotfont)
-
-
-
-    plt.tight_layout()
-
-
-    # order = [3, 4, 5, 0, 1, 2]
-    # handles, labels = plt.gca().get_legend_handles_labels()
-    # plt.legend([handles[idx] for idx in order], [labels[idx] for idx in order],
-    #            loc='lower right',legend
-    #            fontsize=legend)
-
-
-    savestring =  './' + isochrone_file + "_hz_only"
-    filename= savestring + ".pdf"
-
-    print("filename",filename)
-    plt.savefig(filename,  bbox_inches='tight', format='pdf')
-
-
-    outputname = savestring+'.eps'
-
-
-
-    plt.show()
-    plt.close()
+# Save and show
+# savestring = './' + isochrone_file + "_veg_HZ"
+# plt.savefig(savestring + ".pdf", bbox_inches='tight', format='pdf')
+plt.show()
+plt.close()

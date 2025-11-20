@@ -9,6 +9,9 @@ import json
 import shutil
 from wakepy import keep
 import os
+import subprocess
+import base64
+import pickle
 
 ### PLANET CONFIGURATION ###
 N_YEARS = 1
@@ -19,7 +22,7 @@ PRECISION = 8
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
 # AUS = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
-AUS = [0.1, 0.25, 0.5, 1, 1.5, 2, 5]
+AUS = [0.1, 0.25, 0.5, 1, 1.5, 2]
 
 # Vegetation settings
 VEGETATION = 2
@@ -30,7 +33,8 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO=1
+MASS_RATIO=0.1
+MSTARS = [0.1, 0.4, 0.7, 1, 1.2]
 
 # Gas settings
 F_INIT = 0.15
@@ -50,28 +54,45 @@ def piecewise_radius_estimate(mass_ratio):
     # This gas is semi-degenerate, leading to the constant relation
     return 18.6 * (mass_ratio ** (-0.06))
 
-def model_earthlike_stepwise(planet, year, mass_ratio):
-    planet.run(years=1, clean=False)
-    # veg = planet.inspect("vegplantc", tavg=True)
+# Safer version to sidestep SIGILL issues with bad params
+def try_run_planet(planet):
+    # Serialize planet into base64 string for passing via stdin
+    data = pickle.dumps(planet)
+    b64 = base64.b64encode(data).decode()
+
+    code = r"""
+import pickle, base64, exoplasim
+
+b64 = input()
+planet = pickle.loads(base64.b64decode(b64))
+
+planet.run(years=1, clean=False)
+
+out = base64.b64encode(pickle.dumps(planet)).decode()
+print(out)
+"""
+
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        input=b64.encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     
+    print(proc.returncode)
 
-    # lon = planet.inspect("lon")
-    # lat = planet.inspect("lat")
+    # Crash case (SIGILL, segfault, etc)
+    if proc.returncode != 0:
+        return 0
 
-    # Have to open and close figure if doing it in a loop
-    # plt.figure(figsize=(8,4))
-    # plt.pcolormesh(lon, lat, veg, cmap='viridis', shading='gouraud', vmin=0.0, vmax=0.03)
-    # plt.colorbar(label="Vegetation rate")
-    # plt.xlabel("Longitude [deg]")
-    # plt.ylabel("Latitude [deg]")
-    # plt.title(
-    #     f"Planetary Vegetation - Earthlike Planet Scaled by {mass_ratio}\n"
-    #     # f"Year: {year}"
-    # )
+    out_b64 = proc.stdout.decode().strip()
+    new_planet = pickle.loads(base64.b64decode(out_b64))
 
-    # filename = f"vegetation_map_custom_earthlike_scaled_{mass_ratio}_year_{year}.png"
-    # plt.savefig(filename, dpi=300, bbox_inches="tight")
-    # plt.close()
+    return new_planet
+
+def model_earthlike_stepwise(planet, year, mass_ratio):
+    # planet.run(years=1, clean=False)
+    planet = try_run_planet(planet)
 
     return planet
 
@@ -102,10 +123,10 @@ for param in gas_params:
         
 def stellar_mass_to_temp_flux(M_star, a):
     # Mass-luminosity relation (low-mass main-sequence stars)
-    L_star = lsol * M_star**3.5  # W
+    L_star = lsol * M_star**3.5
 
     # Mass-radius relation
-    R_star = rsol * M_star**0.8  # m
+    R_star = rsol * M_star**0.8
 
     # Effective temperature
     startemp = (L_star / (4 * np.pi * R_star**2 * sigma_SB))**0.25
@@ -120,10 +141,13 @@ def stellar_mass_to_temp_flux(M_star, a):
     return startemp, flux
 
 
-def calculate_veg(mass_ratio, au):
+def calculate_veg(mass_ratio, mstar, au):
     r_new = piecewise_radius_estimate(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
-    startemp, flux = stellar_mass_to_temp_flux(mass_ratio, au)
+    startemp, flux = stellar_mass_to_temp_flux(mstar, au)
+    
+    # Cap flux as it crashes model at low AU
+    flux = min(flux, 2000)
     
     planet_params['gravity'] = g_new
     planet_params['radius'] = r_new
@@ -189,7 +213,10 @@ def calculate_veg(mass_ratio, au):
     for year in range(0, N_YEARS):
         planet = model_earthlike_stepwise(planet, mass_ratio, year+1)
         
-    veg = planet.inspect("vegplantc", tavg=True)
+    if planet == 0:
+        return [0,0]
+        
+    veg = planet.inspect("veggpp", tavg=True)
     land = planet.inspect('lsm')
     land = np.sum(land, axis=0)
     
@@ -199,9 +226,7 @@ def calculate_veg(mass_ratio, au):
     tot_veg = np.sum(masked_veg_values)
         
     return [average_veg, tot_veg]
-        
-calculate_veg(1, 1)
-        
+                
 output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}.json"
 
 if os.path.exists(output_file):
@@ -209,21 +234,24 @@ if os.path.exists(output_file):
         output_dict = json.load(f)
 else:
     output_dict = {}
+       
 with keep.presenting():
     mr_key = str(MASS_RATIO)
-    for au in AUS:
-        au_key = str(au)
-        
-        if mr_key in output_dict and au_key in output_dict[mr_key]:
-            continue
-        
-        try:
-            veg_amt = calculate_veg(MASS_RATIO, au)
-            output_dict.setdefault(str(MASS_RATIO), {})[str(au)] = [float(v) for v in veg_amt]
-            with open(output_file, "w") as f:
-                json.dump(output_dict, f, indent=4)
-        except Exception as e:
-            print(f"Error!: {e}")
-            sys.exit()
+    for mstar in MSTARS:
+        ms = str(mstar)
+        for au in AUS:
+            au_key = str(au)
+            
+            if ms in output_dict and au_key in output_dict[ms]:
+                continue
+            
+            try:
+                veg_amt = calculate_veg(MASS_RATIO, mstar, au)
+                output_dict.setdefault(ms, {})[au_key] = [float(v) for v in veg_amt]
+                with open(output_file, "w") as f:
+                    json.dump(output_dict, f, indent=4)
+            except Exception as e:
+                print(f"Error!: {e}")
+                sys.exit()
     
 print(output_dict)
