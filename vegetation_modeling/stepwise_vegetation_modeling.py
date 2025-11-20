@@ -25,7 +25,7 @@ PRESSURE_FRACTION = 1
 MASS_RATIO = 1
 
 # Gas settings
-F_INIT = 0.15
+F_INIT = 0.05
 
 # Estimate radius of the planet based on its mass
 # This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
@@ -119,6 +119,8 @@ F_map = {(0.05, 1): 10 ** (-8), (0.05, 2): 0.001, (0.05, 5): 0.011, (0.05, 10): 
          (0.15, 1): 10 ** (-8), (0.15, 2): 0.011, (0.15, 5): 0.045, (0.15, 10): 0.064}
 F = F_map[(F_INIT, MASS_RATIO)]
 retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 1)
+print(retained_frac)
+sys.exit()
 planet_params['pHe'] = 0.25 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 * 10 ** (-5)  / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 planet_params['pH2'] = 0.75 * retained_frac * Gsi * F * (MASS_RATIO * mearth) ** 2 *  10 ** (-5) / (4 * pi * (r_new * rearth) ** 4) * 10 **(-5)
 

@@ -2,7 +2,7 @@ import exoplasim as exo
 import numpy as np
 from matplotlib import pyplot as plt
 from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b
-from constants import mearth, Gsi, pi, rearth
+from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
 from atm_mass_frac import evolve_atmosphere
 import sys
 import json
@@ -18,9 +18,8 @@ NLAYERS = 10
 PRECISION = 8
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
-MIN_AU=0.5
-MAX_AU=1.25
-AU_STEP_SIZE=0.25
+# AUS = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
+AUS = [0.1, 0.25, 0.5, 1, 1.5, 2, 5]
 
 # Vegetation settings
 VEGETATION = 2
@@ -31,9 +30,7 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MIN_MASS_RATIO = 1
-MAX_MASS_RATIO = 5
-MASS_STEP_SIZE = 1
+MASS_RATIO=1
 
 # Gas settings
 F_INIT = 0.15
@@ -101,16 +98,38 @@ gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', '
 for param in gas_params:
     if param in planet_params:
         planet_params[param] *= PRESSURE_FRACTION
+        
+        
+def stellar_mass_to_temp_flux(M_star, a):
+    # Mass-luminosity relation (low-mass main-sequence stars)
+    L_star = lsol * M_star**3.5  # W
+
+    # Mass-radius relation
+    R_star = rsol * M_star**0.8  # m
+
+    # Effective temperature
+    startemp = (L_star / (4 * np.pi * R_star**2 * sigma_SB))**0.25
+
+    # Convert orbital distance to meters
+    AU = 1.496e11
+    a_m = a * AU
+
+    # Flux at planet
+    flux = L_star / (4 * np.pi * a_m**2)
+
+    return startemp, flux
 
 
 def calculate_veg(mass_ratio, au):
     r_new = piecewise_radius_estimate(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
-
+    startemp, flux = stellar_mass_to_temp_flux(mass_ratio, au)
+    
     planet_params['gravity'] = g_new
     planet_params['radius'] = r_new
     # planet_params['flux'] = BASE_FLUX / (au**2)
-    planet_params['startemp'] = 5778
+    planet_params['startemp'] = startemp
+    planet_params['flux'] = flux
     
     m_c = mass_ratio * mearth
     r_c = calc_r_c(m_c)
@@ -181,7 +200,9 @@ def calculate_veg(mass_ratio, au):
         
     return [average_veg, tot_veg]
         
-output_file = f"veg_json_FI_{F_INIT}_MS_{MASS_STEP_SIZE}_AUS_{AU_STEP_SIZE}2.json"
+calculate_veg(1, 1)
+        
+output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}.json"
 
 if os.path.exists(output_file):
     with open(output_file, "r") as f:
@@ -189,23 +210,20 @@ if os.path.exists(output_file):
 else:
     output_dict = {}
 with keep.presenting():
-    masses = np.arange(MIN_MASS_RATIO, MAX_MASS_RATIO, MASS_STEP_SIZE)
-    aus = np.arange(MIN_AU, MAX_AU, AU_STEP_SIZE)
-    for mr in masses:
-        mr_key = str(mr)
-        for au in aus:
-            au_key = str(au)
-            
-            if mr_key in output_dict and au_key in output_dict[mr_key]:
-                continue
-            
-            try:
-                veg_amt = calculate_veg(mr, au)
-                output_dict.setdefault(str(mr), {})[str(au)] = [float(v) for v in veg_amt]
-                with open(output_file, "w") as f:
-                    json.dump(output_dict, f, indent=4)
-            except Exception as e:
-                print(f"Error!: {e}")
-                sys.exit()
+    mr_key = str(MASS_RATIO)
+    for au in AUS:
+        au_key = str(au)
+        
+        if mr_key in output_dict and au_key in output_dict[mr_key]:
+            continue
+        
+        try:
+            veg_amt = calculate_veg(MASS_RATIO, au)
+            output_dict.setdefault(str(MASS_RATIO), {})[str(au)] = [float(v) for v in veg_amt]
+            with open(output_file, "w") as f:
+                json.dump(output_dict, f, indent=4)
+        except Exception as e:
+            print(f"Error!: {e}")
+            sys.exit()
     
 print(output_dict)
