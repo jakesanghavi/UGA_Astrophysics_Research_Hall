@@ -23,6 +23,7 @@ OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
 # MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
 AUS = [0.1, 0.25, 0.5, 1, 1.5, 2]
+# AUS = [0.1, 0.25, 0.5]
 
 # Vegetation settings
 VEGETATION = 2
@@ -33,8 +34,9 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO=0.15
+MASS_RATIO=6
 MSTARS = [0.1, 0.4, 0.7, 1, 1.2]
+# MSTARS = [0.7, 1, 1.2]
 
 # Gas settings
 F_INIT = 0.15
@@ -227,6 +229,7 @@ def calculate_veg(mass_ratio, mstar, au):
         
     return [average_veg, tot_veg]
                 
+# output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
 output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}.json"
 
 if os.path.exists(output_file):
