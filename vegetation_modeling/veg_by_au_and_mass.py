@@ -14,11 +14,12 @@ import base64
 import pickle
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 1
+N_YEARS = 3
 RESOLUTION = 'T21'
+# For some reason N=6 crashes everything
 NCPUS = 4
 NLAYERS = 10
-PRECISION = 8
+PRECISION = 4
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
 # MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
@@ -230,7 +231,7 @@ def calculate_veg(mass_ratio, mstar, au):
     return [average_veg, tot_veg]
                 
 # output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
-output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}.json"
+output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_RES_{RESOLUTION}_NYEAR_{N_YEARS}_NLAYERS_{NLAYERS}.json"
 
 if os.path.exists(output_file):
     with open(output_file, "r") as f:

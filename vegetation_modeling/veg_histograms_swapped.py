@@ -5,15 +5,16 @@ import re
 import matplotlib.pyplot as plt
 import numpy as np
 
-directory = "."  # adjust as needed
+directory = "."
 
 
 outer_keys = ["0.1", "0.4", "0.7", "1.0", "1.2"]
 inner_keys = ["0.1", "0.25", "0.5", "1.0", "1.5", "2.0"]
 
 # Regex to capture MASS_RATIO after MP_
-# pattern = r"MP_([0-9.]+)\.json$"
-pattern = r"MP_([0-9.]+).*NY_.*\.json$"
+pattern = r"MP_([0-9.]+)\.json$"
+
+# pattern = r"MP_([0-9.]+).*NY_.*\.json$"
 
 results = []
 
@@ -52,21 +53,42 @@ for x in range(len(results)):
 
     results[x]['data'] = new_veg_data
 
-def extract_first_vals(data_list, outer_key, inner_key):
-    result = {}
+# def extract_first_vals(data_list, outer_key, inner_key):
+#     result = {}
 
+#     for entry in data_list:
+#         filename = entry["filename"]
+#         data = entry["data"]
+
+#         if outer_key in data and inner_key in data[outer_key]:
+#             vals = data[outer_key][inner_key]
+#             if isinstance(vals, list) and vals:
+#                 result[filename] = vals[0]
+
+#     return result
+
+def extract_by_au(data_list, star_mass, planet_mass_ratio):
     for entry in data_list:
-        filename = entry["filename"]
-        data = entry["data"]
+        if entry["filename"] == planet_mass_ratio:
+            data = entry["data"]
 
-        if outer_key in data and inner_key in data[outer_key]:
-            vals = data[outer_key][inner_key]
-            if isinstance(vals, list) and vals:
-                result[filename] = vals[0]
+            if star_mass not in data:
+                return {}
 
-    return result
+            au_dict = data[star_mass]
 
-combos = [(ok, ik) for ok in outer_keys for ik in inner_keys]
+            extracted = {
+                float(au): vals[0]
+                for au, vals in au_dict.items()
+                if isinstance(vals, list) and vals
+            }
+
+            return extracted
+
+    return {}
+
+mp_keys = sorted([r["filename"] for r in results], key=float)
+combos = [(star, mp) for star in outer_keys for mp in mp_keys]
 n = len(combos)
 
 plots_per_fig = 9
@@ -83,10 +105,12 @@ for fig_i in range(num_figs):
     block = combos[start:end]
 
     for ax, (outer_key, inner_key) in zip(axes, block):
-        extracted = extract_first_vals(results, outer_key, inner_key)
+        extracted = extract_by_au(results, outer_key, inner_key)
 
         if not extracted:
-            ax.set_title(rf"$M_\oplus$={outer_key}, $au$={inner_key}\n(no data)")
+            ax.set_title(
+                rf"$M_\odot$={outer_key}, $M_\oplus$={inner_key}\n(no data)"
+            )
             ax.axis("off")
             continue
 
@@ -106,12 +130,18 @@ for fig_i in range(num_figs):
         # LOG-SCALE Y
         ax.set_yscale("log")
 
-        ax.set_title(rf"$M_\oplus$={outer_key}, $au$={inner_key}", fontsize=10)
+        ax.set_title(
+            rf"$M_\odot$={outer_key}, $M_\oplus$={inner_key}",
+            fontsize=10
+        )
         ax.tick_params(axis='x', rotation=45)
 
     # Turn off unused axes
     for ax in axes[len(block):]:
         ax.axis("off")
+        
+    fig.supxlabel(r"Orbital Distance (AU)", fontsize=14)
+    fig.supylabel(r"GPP [kg C $\mathbf{m^{-2}s^{-1}}$]", fontsize=14)
 
     plt.tight_layout()
     plt.show()
