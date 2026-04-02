@@ -7,12 +7,12 @@ from matplotlib import pyplot as plt
 import itertools
 
 ### SET THE PLANET NAME AND OTHER GLOBAL PARAMS HERE
-planet_name = input("Input planet name: ")
+planet_name = "earth"
 N_YEARS = 1
 RESOLUTION = 'T21'
 NCPUS = 4
 NLAYERS = 10
-PRECISION = 8
+PRECISION = 4
 OUTPUT_TYPE = '.nc'
 
 # 0 is none, 1 is static, 2 is dynamic
@@ -42,7 +42,7 @@ planet.exportcfg()
 planet.run(years=N_YEARS, clean=False)
 
 # Get out the temperature grid over each lat/lon from our exoplasim model
-veg = planet.inspect("vegplantc",tavg=True)
+veg = planet.inspect("veggpp",tavg=True)
 lon = planet.inspect("lon")
 lat = planet.inspect("lat")
 LON, LAT = np.meshgrid(lon, lat)

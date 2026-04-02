@@ -7,25 +7,22 @@ from atm_mass_frac import evolve_atmosphere
 import sys
 import json
 import shutil
-from wakepy import keep
 import os
 import subprocess
 import base64
 import pickle
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 5
+N_YEARS = 10
 RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
-NCPUS = 4
+NCPUS = 16
 NLAYERS = 10
 PRECISION = 4
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
 # MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
-AUS = [0.1, 0.25, 0.5, 1, 1.5, 2]
-# AUS = [1]
-# AUS = [0.1, 0.25, 0.5]
+AUS = [0.1, 0.25, 0.5, 0.75,  1, 1.25, 1.5]
 
 # Vegetation settings
 VEGETATION = 2
@@ -36,10 +33,8 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO=1
-MSTARS = [0.1, 0.4, 0.7, 1, 1.2]
-# MSTARS = [1]
-# MSTARS = [0.7, 1, 1.2]
+MASS_RATIO=0.75
+MSTARS = [0.1, 0.25, 0.5, 0.75,  1, 1.2]
 
 # Gas settings
 F_INIT = 0.15
@@ -85,8 +80,7 @@ print(out)
     )
     
     print(proc.returncode)
-    
-    # Decode and print stdout
+
     if proc.stdout:
         print("STDOUT:\n", proc.stdout.decode())
 
@@ -152,7 +146,6 @@ def stellar_mass_to_temp_flux(M_star, a):
     flux = L_star / (4 * np.pi * a_m**2)
 
     return startemp, flux
-
 
 def calculate_veg(mass_ratio, mstar, au):
     r_new = piecewise_radius_estimate(mass_ratio)
@@ -241,8 +234,7 @@ def calculate_veg(mass_ratio, mstar, au):
     return [average_veg, tot_veg]
                 
 # output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
-output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_RES_{RESOLUTION}_NYEAR_{N_YEARS}_NLAYERS_{NLAYERS}.json"
-# output_file = "test.json"
+output_file = f"16cpus_test_{str(MASS_RATIO).replace('.', '')}.json"
 
 if os.path.exists(output_file):
     with open(output_file, "r") as f:
@@ -250,7 +242,7 @@ if os.path.exists(output_file):
 else:
     output_dict = {}
        
-with keep.presenting():
+if 1 == 1:
     mr_key = str(MASS_RATIO)
     for mstar in MSTARS:
         ms = str(mstar)
