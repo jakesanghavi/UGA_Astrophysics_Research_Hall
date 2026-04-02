@@ -1,7 +1,7 @@
 import exoplasim as exo
 import numpy as np
 from matplotlib import pyplot as plt
-from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b
+from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b, calc_hz_percentiles
 from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
 from atm_mass_frac import evolve_atmosphere
 import sys
@@ -22,7 +22,6 @@ PRECISION = 4
 OUTPUT_TYPE = '.nc'
 PLANET_NAME = 'EARTH'
 # MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
-AUS = [0.1, 0.25, 0.5, 0.75,  1, 1.25, 1.5]
 
 # Vegetation settings
 VEGETATION = 2
@@ -246,7 +245,8 @@ if 1 == 1:
     mr_key = str(MASS_RATIO)
     for mstar in MSTARS:
         ms = str(mstar)
-        for au in AUS:
+        aus = calc_hz_percentiles(mstar)
+        for au in aus:
             au_key = str(au)
             
             if ms in output_dict and au_key in output_dict[ms]:
