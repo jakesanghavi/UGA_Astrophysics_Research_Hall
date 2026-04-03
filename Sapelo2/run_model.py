@@ -16,7 +16,7 @@ import pickle
 N_YEARS = 10
 RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
-NCPUS = 16
+NCPUS = 4
 NLAYERS = 10
 PRECISION = 4
 OUTPUT_TYPE = '.nc'
@@ -32,8 +32,8 @@ BASE_FLUX = 1367
 
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
-MASS_RATIO=0.75
-MSTARS = [0.1, 0.25, 0.5, 0.75,  1, 1.2]
+MASS_RATIO=4
+MSTARS = [0.1, 0.5, 1]
 
 # Gas settings
 F_INIT = 0.15
