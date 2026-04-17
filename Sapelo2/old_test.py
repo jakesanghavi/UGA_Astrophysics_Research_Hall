@@ -1,0 +1,264 @@
+import exoplasim as exo
+import numpy as np
+from matplotlib import pyplot as plt
+from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b, calc_hz_percentiles
+from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
+from atm_mass_frac import evolve_atmosphere
+import sys
+import json
+import shutil
+import os
+import subprocess
+import base64
+import pickle
+
+### PLANET CONFIGURATION ###
+N_YEARS = 1
+RESOLUTION = 'T42'
+# Change name based on resolution
+TO_APPEND = "" if RESOLUTION == 'T21' else RESOLUTION
+# For some reason N=6 crashes everything
+NCPUS = 4
+NLAYERS = 10
+PRECISION = 4
+OUTPUT_TYPE = '.nc'
+PLANET_NAME = 'EARTH'
+# MPs = [0.1, 0.15, 0.25, 0.5, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.00]
+
+# Vegetation settings
+VEGETATION = 2
+VEGACCEL = 1
+INIT_GROWTH = 0.5
+WET_SOIL = True
+BASE_FLUX = 1367
+
+# Planet Comparison to Earth
+PRESSURE_FRACTION = 1
+MASS_RATIO=3
+MSTARS = [0.1, 0.5, 1]
+
+# Gas settings
+F_INIT = 0.15
+
+# Estimate radius of the planet based on its mass
+# This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
+def piecewise_radius_estimate(mass_ratio):
+    # Small/rocky planets, like Earth
+    if mass_ratio < 4.37:
+        return 1.02 * (mass_ratio**0.27)
+    # Intermediate-mass planets
+    # H/He envelopes no longer neglible, so radius grows faster with mass than before
+    if mass_ratio < 127:
+        return 0.56 * (mass_ratio**0.67)
+    # Massive planets, mass dominated by light gas.
+    # Radius becomes almost constant and independent of mass
+    # This gas is semi-degenerate, leading to the constant relation
+    return 18.6 * (mass_ratio ** (-0.06))
+
+# Safer version to sidestep SIGILL issues with bad params
+def try_run_planet(planet):
+    # Serialize planet into base64 string for passing via stdin
+    data = pickle.dumps(planet)
+    b64 = base64.b64encode(data).decode()
+
+    code = r"""
+import pickle, base64, exoplasim
+
+b64 = input()
+planet = pickle.loads(base64.b64decode(b64))
+
+planet.run(years=1, clean=False)
+
+out = base64.b64encode(pickle.dumps(planet)).decode()
+print(out)
+"""
+
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        input=b64.encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    
+    print(proc.returncode)
+
+    if proc.stdout:
+        print("STDOUT:\n", proc.stdout.decode())
+
+    # Decode and print stderr
+    if proc.stderr:
+        print("STDERR:\n", proc.stderr.decode())
+
+    # Crash case (SIGILL, segfault, etc)
+    if proc.returncode != 0:
+        return 0
+
+    out_b64 = proc.stdout.decode().strip()
+    new_planet = pickle.loads(base64.b64decode(out_b64))
+
+    return new_planet
+
+def model_earthlike_stepwise(planet, year, mass_ratio):
+    # planet.run(years=1, clean=False)
+    planet = try_run_planet(planet)
+
+    return planet
+
+
+planet_params = {
+        'vegetation': VEGETATION,
+        'vegaccel': VEGACCEL,
+        'initgrowth': INIT_GROWTH,
+        'wetsoil': WET_SOIL,
+        'pH2': 0.0,
+        'pHe': 5.24e-6,
+        'pN2': 0.78084,
+        'pO2': 0.20946,
+        'pCO2': 330.0e-6,
+        'pAr': 9.34e-3,
+        'pNe': 18.18e-6,
+        'pKr': 1.14e-6,
+        'pH2O': 0.01,
+        'pCH4': 0.0
+    }
+
+gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
+
+for param in gas_params:
+    if param in planet_params:
+        planet_params[param] *= PRESSURE_FRACTION
+        
+        
+def stellar_mass_to_temp_flux(M_star, a):
+    # Mass-luminosity relation (low-mass main-sequence stars)
+    L_star = lsol * M_star**3.5
+
+    # Mass-radius relation
+    R_star = rsol * M_star**0.8
+
+    # Effective temperature
+    startemp = (L_star / (4 * np.pi * R_star**2 * sigma_SB))**0.25
+
+    # Convert orbital distance to meters
+    AU = 1.496e11
+    a_m = a * AU
+
+    # Flux at planet
+    flux = L_star / (4 * np.pi * a_m**2)
+
+    return startemp, flux
+
+def calculate_veg(mass_ratio, mstar, au):
+    r_new = piecewise_radius_estimate(mass_ratio)
+    g_new = 9.80665 * mass_ratio / (r_new ** 2)
+    startemp, flux = stellar_mass_to_temp_flux(mstar, au)
+    
+    # Cap flux as it crashes model at low AU
+    flux = min(flux, 2000)
+    
+    planet_params['gravity'] = g_new
+    planet_params['radius'] = r_new
+    # planet_params['flux'] = BASE_FLUX / (au**2)
+    planet_params['startemp'] = startemp
+    planet_params['flux'] = flux
+    
+    m_c = mass_ratio * mearth
+    r_c = calc_r_c(m_c)
+    r_rcb = 2 * r_c
+    t_eq = 255
+    r_b = calc_r_B(m_c, t_eq)
+    rho_rcb = calc_rho_rcb(r_b, r_rcb)
+    r_prime_b = calc_r_prime_b(r_b)
+
+    retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 0.5)
+    times, GCRs = evolve_atmosphere(
+                Mc_me=mass_ratio,
+                a_AU=au,
+                t_disk_Myr=3.0,
+                t_end_Gyr=5.0,
+                init=F_INIT,
+                dusty=True,
+                eta=0.1,
+                Lxuv0=2.05e22,
+                t_sat_Myr=100,
+                decay_index=1.1
+            )
+
+    # Targeting a time of 2 Gyr
+    target_time = 2 * 10**9
+    mask = times > target_time
+    target_index = np.argmax(mask)
+    F = GCRs[target_index]
+    
+    # If time is greater than max time, that means there has been no gas retained
+    # as the simulation stops when M_atm == 0
+    if target_index <= 0:
+        F = 0
+    planet_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
+    planet_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
+
+    try:
+        shutil.rmtree(f"custom_earthlike_model{TO_APPEND}")
+        shutil.rmtree(f"custom_earthlike_model_crashed{TO_APPEND}")
+    except:
+        pass
+    # Create the model
+    planet = exo.Model(
+        workdir=f"custom_earthlike_model{TO_APPEND}",
+        modelname=f"custom_earthlike_model{TO_APPEND}",
+        resolution=RESOLUTION,
+        ncpus=NCPUS,
+        layers=NLAYERS,
+        precision=PRECISION,
+        outputtype=OUTPUT_TYPE
+    )
+
+    # Configure and run
+    planet.configure(**planet_params)
+    planet.exportcfg()
+
+    for year in range(0, N_YEARS):
+        planet = model_earthlike_stepwise(planet, mass_ratio, year+1)
+        
+    if planet == 0:
+        return [0,0]
+        
+    veg = planet.inspect("veggpp", tavg=True)
+    land = planet.inspect('lsm')
+    land = np.sum(land, axis=0)
+    
+    land_mask = land > 0
+    masked_veg_values = veg[land_mask]
+    average_veg = np.mean(masked_veg_values)
+    tot_veg = np.sum(masked_veg_values)
+        
+    return [average_veg, tot_veg]
+                
+# output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
+output_file = f"16cpus_test_{str(MASS_RATIO).replace('.', '')}{TO_APPEND}.json"
+
+if os.path.exists(output_file):
+    with open(output_file, "r") as f:
+        output_dict = json.load(f)
+else:
+    output_dict = {}
+       
+if 1 == 1:
+    mr_key = str(MASS_RATIO)
+    for mstar in MSTARS:
+        ms = str(mstar)
+        aus = calc_hz_percentiles(mstar)
+        for au in aus:
+            au_key = str(au)
+            
+            if ms in output_dict and au_key in output_dict[ms]:
+                continue
+            
+            try:
+                veg_amt = calculate_veg(MASS_RATIO, mstar, au)
+                output_dict.setdefault(ms, {})[au_key] = [float(v) for v in veg_amt]
+                with open(output_file, "w") as f:
+                    json.dump(output_dict, f, indent=4)
+            except Exception as e:
+                print(f"Error!: {e}")
+                sys.exit()

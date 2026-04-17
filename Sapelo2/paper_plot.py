@@ -5,8 +5,10 @@ import numpy as np
 
 mp_values = ["01", "025", "05", "075", "1", "15", "2", "3", "4"]  # corresponds to 0.5, 1.0, 1.5
 mp_numeric = [float(m) if (not m.startswith("0") and m != "15") else float(m[0] + "." + m[1:]) for m in mp_values]
+RESOLUTION = "T21"
+to_append = RESOLUTION if RESOLUTION == "T42" else ""
 
-data_files = {mp: f"16cpus_test_{mp}.json" for mp in mp_values}
+data_files = {mp: f"16cpus_test_{mp}{to_append}.json" for mp in mp_values}
 
 # choose which index from the JSON list to plot (0 or 1)
 VALUE_INDEX = 0
