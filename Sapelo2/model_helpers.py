@@ -13,7 +13,7 @@ import base64
 import pickle
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 1
+N_YEARS = 10
 RESOLUTION = 'T42'
 # For some reason N=6 crashes everything
 NCPUS = 4
