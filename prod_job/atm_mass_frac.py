@@ -16,8 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import G, k, m_p, sigma
 from math import pi
-from constants import lsol
-from scipy.interpolate import interp1d
 
 # ============================================================
 # Constants
@@ -28,8 +26,28 @@ year = 365.25 * 24 * 3600
 AU = 1.496e11
 L_sun = 3.828e26
 M_sun = 1.98847e30
+X_fe = 0.32
+X_fe_m = 0.081
 
-def get_lxuv0_from_bolometric(L_bol_present, x_bol_ratio=-3.02):
+def get_stellar_xuv_params(m_star):
+    if m_star >= 0.8:
+        x_bol = -3.13
+        decay_index = 1.23
+
+    elif m_star >= 0.35:
+        x_bol = -3.08
+        decay_index = 1.15
+
+    else:
+        x_bol = -3.02
+        decay_index = 1.05
+
+    t_sat_years = 100e6 * (m_star)**(-1.75)
+    t_sat_years = np.clip(t_sat_years, 20e6, 2.5e9)
+
+    return 10**x_bol, t_sat_years, decay_index
+
+def get_lxuv0_from_bolometric(L_bol_present, mstar):
     """
     Calculates the initial saturated XUV luminosity (Lxuv0) directly from 
     the star's present-day overall bolometric luminosity.
@@ -50,7 +68,7 @@ def get_lxuv0_from_bolometric(L_bol_present, x_bol_ratio=-3.02):
     L_bol_watts = L_bol_present
 
     # Young stars saturate their corona at ~0.1% of their total bolometric budget
-    f_sat = 10**(x_bol_ratio)
+    f_sat = get_stellar_xuv_params(mstar)[0]
     Lxuv0_watts = L_bol_watts * f_sat
     
     return Lxuv0_watts
@@ -58,8 +76,20 @@ def get_lxuv0_from_bolometric(L_bol_present, x_bol_ratio=-3.02):
 # ============================================================
 # Core radius
 # ============================================================
-def core_radius_zeng(Mc_mearth, CMF=0.26):
-    return R_earth * (1.07 - 0.21 * CMF) * (Mc_mearth ** (1/3.7))
+def radius_noack(m_p):
+    return 1000*((7030 - 1840 * X_fe)*(m_p/M_earth)**0.282)/R_earth
+
+def cmf_noack():
+    return (X_fe - X_fe_m)/(1-X_fe_m)
+
+def core_radius_noack(m_p, cmf):
+    return 1000*(4850*(cmf**0.328)*(m_p/M_earth)**0.266)
+
+def core_density_noack(m_p, cmf, r_c):
+    return (cmf*m_p*M_earth)/(4/3 * np.pi * (r_c**3))
+
+def core_mass_noack(r_c, rho_c):
+    return (4/3)*np.pi*(r_c**3)*rho_c
 
 # ============================================================
 # Initial envelope (Lee & Chiang)
@@ -109,7 +139,7 @@ def bondi_timescale(Matm, Mc_kg, Rp, T, mu=2.2):
 # ============================================================
 # Stellar XUV track
 # ============================================================
-def Lxuv_track(t, Lxuv0=1e22, t_sat=100e6*year, decay_index=1.1):
+def Lxuv_track(t, Lxuv0=1e22, t_sat=year, decay_index=1.1):
     return Lxuv0 if t <= t_sat else Lxuv0 * (t / t_sat) ** (-decay_index)
 
 # ============================================================
@@ -161,13 +191,19 @@ def planet_radius(Rc, Mc_kg, Matm):
 # ============================================================
 # Atmosphere evolution
 # ============================================================
-def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
+def evolve_atmosphere(M_p, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
                       Z=0.02, dusty=True, init=0.05, mu=2.2, eta=0.1,
-                      Lxuv0=3e22, t_sat_Myr=100, decay_index=1.1,
+                      Lnow=3e22, t_sat_Myr=100, decay_index=1.1, M_star = 1.0,
                       show_progress=False):
-
-    Mc_kg = Mc_me * M_earth
-    Rc = core_radius_zeng(Mc_me)
+    
+    Lxuv0 = get_lxuv0_from_bolometric(Lnow, M_star)
+    others = get_stellar_xuv_params(M_star)
+    t_sat_years = others[1]
+    decay_index = others[2]
+    CMF = cmf_noack()
+    Rc = core_radius_noack(M_p, CMF)
+    Rhoc = core_density_noack(M_p, CMF, Rc)
+    Mc_kg = core_mass_noack(Rc, Rhoc)
     T_eq = (L_sun / (16 * pi * (a_AU*AU)**2 * sigma))**0.25
 
     # Initial envelope
@@ -179,10 +215,11 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
     t_end = t_end_Gyr * 1e9 * year
     times, GCRs = [t/year], [Matm/Mc_kg]
     xuvs = [Lxuv0]
+    XUV_norm = 1/3.15
 
     while t < t_end and Matm > 0:
         M_p = Mc_kg + Matm
-        Rp = planet_radius(Rc, Mc_kg, Matm)
+        Rp = radius_noack(M_p)
         g_acc = G * Mc_kg / Rc**2
 
         # Cooling and Bondi times
@@ -197,8 +234,8 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
         mdot_core = core_powered_loss(L, g_acc, Rc, eta)
 
         # Local XUV photoevaporative wind interaction
-        L_XUV = Lxuv_track(t, Lxuv0, t_sat_Myr * 1e6 * year, decay_index)
-        mdot_xuv = photoevaporation_rate_paper(a_AU, L_XUV, Rp)
+        L_XUV = Lxuv_track(t, Lxuv0, t_sat_years * year, decay_index)
+        mdot_xuv = photoevaporation_rate_paper(a_AU, L_XUV*XUV_norm, Rp)
 
         # Total mass loss
         mdot = mdot_core + mdot_xuv
@@ -214,19 +251,22 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
 
         times.append(t/year)
         GCRs.append(Matm/Mc_kg)
-        xuvs.append(L_XUV)
+        xuvs.append(L_XUV*XUV_norm)
 
     return np.array(times), np.array(GCRs), np.array(xuvs)
 
 # ============================================================
 # Run and plot
 # ============================================================
-def run_planet_model(Mc_me=1.0, a_AU=2.0, t_disk_Myr=3.0, t_end_Gyr=5.0,
+def run_planet_model(M_p=1.0, a_AU=2.0, t_disk_Myr=3.0, t_end_Gyr=5.0,
                      Z=0.02, dusty=True, init=0.05, mu=2.2, eta=0.1, Lnow=3e22,
-                     t_sat_Myr=100, decay_index=1.1, Mstar=1.0):
+                     t_sat_Myr=100, decay_index=1.1, M_star = 1.0):
 
-    Lxuv0 = get_lxuv0_from_bolometric(Lnow)
-    times, GCRs, xuvs = evolve_atmosphere(Mc_me, a_AU, t_disk_Myr, t_end_Gyr,
+    Lxuv0 = get_lxuv0_from_bolometric(Lnow, M_star)
+    others = get_stellar_xuv_params(M_star)
+    t_sat_Myr = others[1]
+    decay_index = others[2]
+    times, GCRs, xuvs = evolve_atmosphere(M_p, a_AU, t_disk_Myr, t_end_Gyr,
                                     Z, dusty, init, mu, eta,
                                     Lxuv0, t_sat_Myr, decay_index)
 
@@ -239,65 +279,24 @@ def run_planet_model(Mc_me=1.0, a_AU=2.0, t_disk_Myr=3.0, t_end_Gyr=5.0,
     plt.legend()
     plt.tight_layout()
     plt.show()
-    
-    # Plot 2: XUV evolution over time
-    plt.figure(figsize=(7, 4))
-    plt.loglog(times/1e6, xuvs, color='crimson', label='XUV Evolution')
-    plt.xlabel("Time (Myr)")
-    plt.ylabel("XUV Luminosity / Flux")
-    plt.title(fr"XUV Evolution for {Mstar} $M_\odot$ star")
-    plt.grid(True, which="both", ls=":")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
 
     print(f"Final GCR at {t_end_Gyr} Gyr: {GCRs[-1]:.3e}")
-    print(xuvs[0])
-    print(xuvs[-1])
     return times, GCRs, xuvs
 
 # ============================================================
 # Call to run
 # ============================================================
 if __name__ == "__main__":
-    
-    mass_grid = np.array([
-        0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
-        0.070, 0.072, 0.075, 0.080, 0.090, 0.100, 0.110,
-        0.130, 0.150, 0.170, 0.200, 0.300, 0.400, 0.500,
-        0.600, 0.700, 0.800, 0.900, 1.000, 1.100, 1.200,
-        1.300, 1.400
-    ])
-
-
-    log_L_grid = np.array([
-        -3.13, -2.79, -2.57, -2.17, -1.92, -1.74, -1.61,
-        -1.51, -1.49, -1.46, -1.42, -1.36, -1.44, -1.39,
-        -1.32, -1.25, -1.18, -1.10, -0.86, -0.68, -0.54,
-        -0.42, -0.31, -0.21, -0.13, -0.05,  0.02,  0.09,
-        0.15,  0.22
-    ])
-    
-    get_logL = interp1d(
-        mass_grid, log_L_grid,
-        kind='linear',
-        bounds_error=False,
-        fill_value='extrapolate'
-    )
-    
-    mstar = 1
-    Lnow = 10**get_logL(mstar) * lsol
-    
     run_planet_model(
-        Mc_me=1.0,   # 1 Earth Mass
+        M_p=1.0,   # 1 Earth Mass
         a_AU=1.0,    # 2 AU
         t_disk_Myr=3.0,
         t_end_Gyr=5.0,
         init=0.01,
         dusty=True,
         eta=0.1,
-        Lnow=Lnow, 
+        Lnow=3.828e26, 
         t_sat_Myr=100,
         decay_index=1.1,
-        Mstar=mstar
+        M_star = 1.0
     )

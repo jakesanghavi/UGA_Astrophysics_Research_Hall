@@ -16,8 +16,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.constants import G, k, m_p, sigma
 from math import pi
-from constants import lsol
-from scipy.interpolate import interp1d
 
 # ============================================================
 # Constants
@@ -29,7 +27,7 @@ AU = 1.496e11
 L_sun = 3.828e26
 M_sun = 1.98847e30
 
-def get_lxuv0_from_bolometric(L_bol_present, x_bol_ratio=-3.02):
+def get_lxuv0_from_bolometric(L_bol_present):
     """
     Calculates the initial saturated XUV luminosity (Lxuv0) directly from 
     the star's present-day overall bolometric luminosity.
@@ -50,7 +48,7 @@ def get_lxuv0_from_bolometric(L_bol_present, x_bol_ratio=-3.02):
     L_bol_watts = L_bol_present
 
     # Young stars saturate their corona at ~0.1% of their total bolometric budget
-    f_sat = 10**(x_bol_ratio)
+    f_sat = 10**(-2.7)
     Lxuv0_watts = L_bol_watts * f_sat
     
     return Lxuv0_watts
@@ -67,6 +65,9 @@ def core_radius_zeng(Mc_mearth, CMF=0.26):
 def initial_GCR(init=0.05):
     return init
 
+# ============================================================
+# Boil-off (Owen & Wu heuristic)
+# ============================================================
 def apply_boiloff(Matm, Mc_kg, Rc, T_eq, mu=2.3):
     g = G * Mc_kg / Rc**2
     H = k * T_eq / (mu * m_p * g)
@@ -84,22 +85,39 @@ def apply_boiloff(Matm, Mc_kg, Rc, T_eq, mu=2.3):
 # ============================================================
 # Cooling luminosity
 # ============================================================
-def cooling_luminosity(Matm, Mc_kg, Rc):
-    E_bind = G * Mc_kg * Matm / Rc
-    GCR = Matm / Mc_kg
-    t_KH = 1e7 * year * (max(GCR, 1e-4) / 0.01)**(-3)
-    return E_bind / t_KH, t_KH
+def cooling_luminosity_PY(Matm, Mc_kg, Rc, mu=29, kappa=0.1, gamma=7/5):
+    # Gamma 5/3 is monatomic (ex. helium), Gamma = 7/5 for diatomic (ex. hydrogen)
+    
+    nabla_ad = (gamma - 1) / gamma
+    E_env = G * Mc_kg * Matm / Rc
+
+    # RCB temperature from ideal-gas + hydrostatic balance
+    T_rcb = (G * Mc_kg * mu * m_p) / (k * Rc)
+
+    # --- 3. RCB pressure from optical depth ~ 1 condition
+    # τ ~ κ P / g ~ 1 → P ~ g / κ
+    g = G * Mc_kg / Rc**2
+    P_rcb = g / kappa
+
+    # Radiative diffusion luminosity at RCB
+    L = (64 * 3.1416 * G * Mc_kg * sigma * T_rcb**4 /
+         (3 * kappa * P_rcb)) * nabla_ad
+
+    # Cooling time
+    t_cool = E_env / L
+
+    return L, t_cool
 
 # ============================================================
 # Core-powered mass loss
 # ============================================================
-def core_powered_loss(L, g, Rc, eta):
-    return eta*L / (g * Rc)
+def core_powered_loss(L, g, Rc):
+    return L / (g * Rc)
 
 # ============================================================
 # Bondi-limited timescale
 # ============================================================
-def bondi_timescale(Matm, Mc_kg, Rp, T, mu=2.2):
+def bondi_timescale(Matm, Mc_kg, Rp, T, mu=29):
     cs = np.sqrt(k * T / (mu * m_p))
     R_B = G * Mc_kg / cs**2
     rho = Matm / (4/3 * pi * Rp**3)
@@ -172,9 +190,8 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
 
     # Initial envelope
     GCR0 = initial_GCR(init)
-    # Matm = apply_boiloff(GCR0*Mc_kg, Mc_kg, Rc, T_eq, mu)
+    Matm = apply_boiloff(GCR0*Mc_kg, Mc_kg, Rc, T_eq, mu)
 
-    Matm = GCR0 * Mc_kg
     t = t_disk_Myr * 1e6 * year
     t_end = t_end_Gyr * 1e9 * year
     times, GCRs = [t/year], [Matm/Mc_kg]
@@ -190,11 +207,10 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
         t_B = bondi_timescale(Matm, Mc_kg, Rp, T_eq, mu)
 
         # Core-powered loss
-        # if t_cool < t_B:
-        #     mdot_core = core_powered_loss(L, g_acc, Rc, eta)
-        # else:
-        #     mdot_core = 0.0 
-        mdot_core = core_powered_loss(L, g_acc, Rc, eta)
+        if t_cool < t_B:
+            mdot_core = core_powered_loss(L, g_acc, Rc)
+        else:
+            mdot_core = 0.0 
 
         # Local XUV photoevaporative wind interaction
         L_XUV = Lxuv_track(t, Lxuv0, t_sat_Myr * 1e6 * year, decay_index)
@@ -223,7 +239,7 @@ def evolve_atmosphere(Mc_me, a_AU=0.1, t_disk_Myr=3.0, t_end_Gyr=5.0,
 # ============================================================
 def run_planet_model(Mc_me=1.0, a_AU=2.0, t_disk_Myr=3.0, t_end_Gyr=5.0,
                      Z=0.02, dusty=True, init=0.05, mu=2.2, eta=0.1, Lnow=3e22,
-                     t_sat_Myr=100, decay_index=1.1, Mstar=1.0):
+                     t_sat_Myr=100, decay_index=1.1):
 
     Lxuv0 = get_lxuv0_from_bolometric(Lnow)
     times, GCRs, xuvs = evolve_atmosphere(Mc_me, a_AU, t_disk_Myr, t_end_Gyr,
@@ -239,55 +255,14 @@ def run_planet_model(Mc_me=1.0, a_AU=2.0, t_disk_Myr=3.0, t_end_Gyr=5.0,
     plt.legend()
     plt.tight_layout()
     plt.show()
-    
-    # Plot 2: XUV evolution over time
-    plt.figure(figsize=(7, 4))
-    plt.loglog(times/1e6, xuvs, color='crimson', label='XUV Evolution')
-    plt.xlabel("Time (Myr)")
-    plt.ylabel("XUV Luminosity / Flux")
-    plt.title(fr"XUV Evolution for {Mstar} $M_\odot$ star")
-    plt.grid(True, which="both", ls=":")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
 
     print(f"Final GCR at {t_end_Gyr} Gyr: {GCRs[-1]:.3e}")
-    print(xuvs[0])
-    print(xuvs[-1])
     return times, GCRs, xuvs
 
 # ============================================================
 # Call to run
 # ============================================================
 if __name__ == "__main__":
-    
-    mass_grid = np.array([
-        0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
-        0.070, 0.072, 0.075, 0.080, 0.090, 0.100, 0.110,
-        0.130, 0.150, 0.170, 0.200, 0.300, 0.400, 0.500,
-        0.600, 0.700, 0.800, 0.900, 1.000, 1.100, 1.200,
-        1.300, 1.400
-    ])
-
-
-    log_L_grid = np.array([
-        -3.13, -2.79, -2.57, -2.17, -1.92, -1.74, -1.61,
-        -1.51, -1.49, -1.46, -1.42, -1.36, -1.44, -1.39,
-        -1.32, -1.25, -1.18, -1.10, -0.86, -0.68, -0.54,
-        -0.42, -0.31, -0.21, -0.13, -0.05,  0.02,  0.09,
-        0.15,  0.22
-    ])
-    
-    get_logL = interp1d(
-        mass_grid, log_L_grid,
-        kind='linear',
-        bounds_error=False,
-        fill_value='extrapolate'
-    )
-    
-    mstar = 1
-    Lnow = 10**get_logL(mstar) * lsol
-    
     run_planet_model(
         Mc_me=1.0,   # 1 Earth Mass
         a_AU=1.0,    # 2 AU
@@ -296,8 +271,7 @@ if __name__ == "__main__":
         init=0.01,
         dusty=True,
         eta=0.1,
-        Lnow=Lnow, 
+        Lnow=3.828e26, 
         t_sat_Myr=100,
-        decay_index=1.1,
-        Mstar=mstar
+        decay_index=1.1
     )

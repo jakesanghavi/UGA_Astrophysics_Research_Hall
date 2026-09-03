@@ -5,17 +5,15 @@ import json
 import numpy as np
 
 rows = []
-mp_values = ["01", "025", "05", "075", "1", "15", "2", "3", "4"]  # corresponds to 0.5, 1.0, 1.5
-mp_numeric = [float(m) if (not m.startswith("0") and m != "15") else float(m[0] + "." + m[1:]) for m in mp_values]
+mp_values = ["00266", "0052", "01", "025", "05", "075", "10", "15", "2", "3", "4"]
+mp_numeric = [float(m) if (not m.startswith("0") and m != "15" and m != "10") else float(m[0] + "." + m[1:]) for m in mp_values]
 RESOLUTION = "T21"
 to_append = RESOLUTION if RESOLUTION == "T42" else ""
 
 data_files = {mp: f"16cpus_test_{mp}{to_append}.json" for mp in mp_values}
 
-# choose which index from the JSON list to plot (0 or 1)
 VALUE_INDEX = 0
 
-# ---- LOAD DATA ----
 all_data = {}
 
 for mp, filename in data_files.items():
@@ -24,7 +22,6 @@ for mp, filename in data_files.items():
 
 mstar_keys = sorted(all_data[mp_values[0]].keys(), key=float)
 
-# assume same AU keys structure across files
 au_keys_per_mstar = {
     m: sorted(all_data[mp_values[0]][m].keys(), key=float)
     for m in mstar_keys
@@ -49,14 +46,15 @@ for mp_str, mp_val in zip(mp_values, mp_numeric):
             })
 
 df = pd.DataFrame(rows)
+df = df[df['StellarMass'] <= 4.0]
 
 model = ols(
-    'GPP ~ C(PlanetMass) + C(StellarMass) + C(Distance)',
+    'GPP ~ PlanetMass + StellarMass + Distance',
     data=df
 ).fit()
 
 anova_table = sm.stats.anova_lm(model, typ=2)
-print(anova_table)
+print(model.summary())
 
 model = ols(
     'GPP ~ PlanetMass * StellarMass * Distance',

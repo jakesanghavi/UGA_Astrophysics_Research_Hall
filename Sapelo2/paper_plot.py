@@ -2,9 +2,10 @@ import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import sys
 
-mp_values = ["01", "025", "05", "075", "1", "15", "2", "3", "4"]  # corresponds to 0.5, 1.0, 1.5
-mp_numeric = [float(m) if (not m.startswith("0") and m != "15") else float(m[0] + "." + m[1:]) for m in mp_values]
+mp_values = ["00266", "0052", "01", "025", "05", "075", "10", "15", "2", "3", "4"]
+mp_numeric = [float(m) if (not m.startswith("0") and m != "15" and m!= "10") else float(m[0] + "." + m[1:]) for m in mp_values]
 RESOLUTION = "T21"
 to_append = RESOLUTION if RESOLUTION == "T42" else ""
 

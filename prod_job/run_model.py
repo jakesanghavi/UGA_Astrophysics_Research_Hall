@@ -1,9 +1,8 @@
 from model_helpers import model_fun
 from time import time, strftime, gmtime
 
-# MASS_RATIOS = [0.0266, 0.052, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
-MASS_RATIOS = [1]
-# MASS_RATIOS = [4]
+MASS_RATIOS = [0.0266, 0.052, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
+# MASS_RATIOS = [0.5, 1]
 
 for m in MASS_RATIOS:
     print(f"Starting model for mass ratio: {m}")

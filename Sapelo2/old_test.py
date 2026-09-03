@@ -154,7 +154,7 @@ def calculate_veg(mass_ratio, mstar, au):
     startemp, flux = stellar_mass_to_temp_flux(mstar, au)
     
     # Cap flux as it crashes model at low AU
-    flux = min(flux, 2000)
+    # flux = min(flux, 2000)
     
     planet_params['gravity'] = g_new
     planet_params['radius'] = r_new
@@ -232,7 +232,7 @@ def calculate_veg(mass_ratio, mstar, au):
     average_veg = np.mean(masked_veg_values)
     tot_veg = np.sum(masked_veg_values)
         
-    return [average_veg, tot_veg]
+    return [average_veg, tot_veg, flux]
                 
 # output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
 output_file = f"16cpus_test_{str(MASS_RATIO).replace('.', '')}{TO_APPEND}.json"

@@ -11,10 +11,12 @@ import os
 import subprocess
 import base64
 import pickle
+import uuid
+from scipy.interpolate import interp1d
 
 ### PLANET CONFIGURATION ###
 N_YEARS = 1
-RESOLUTION = 'T42'
+RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
 NCPUS = 4
 NLAYERS = 10
@@ -33,10 +35,25 @@ BASE_FLUX = 1367
 # Planet Comparison to Earth
 PRESSURE_FRACTION = 1
 MASS_RATIO=3
-MSTARS = [0.1, 0.5, 1]
+#MSTARS = [0.1, 0.5, 1, 1.25, 1.5, 2, 5, 9]
+MSTARS = [0.7, 0.8, 0.9, 1.1]
+#MSTARS = [0.1, 0.5, 1, 1.25, 1.5, 2]
 
 # Gas settings
-F_INIT = 0.15
+F_INIT = 0.01
+
+os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
+os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
+os.environ["FORTRAN_STDOUT_UNIT"] = "6"
+os.environ["PYTHONFAULTHANDLER"] = "1"
+
+def get_lxuv0_from_bolometric(L_bol_present):
+    L_bol_watts = L_bol_present
+
+    f_sat = 10**(-3.02)
+    Lxuv0_watts = L_bol_watts * f_sat
+    
+    return Lxuv0_watts
 
 # Estimate radius of the planet based on its mass
 # This is based on "The mass–radius relation of exoplanets revisited" by Müller et al. 2024
@@ -53,7 +70,6 @@ def piecewise_radius_estimate(mass_ratio):
     # This gas is semi-degenerate, leading to the constant relation
     return 18.6 * (mass_ratio ** (-0.06))
 
-# Safer version to sidestep SIGILL issues with bad params
 def try_run_planet(planet):
     # Serialize planet into base64 string for passing via stdin
     data = pickle.dumps(planet)
@@ -125,23 +141,84 @@ gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', '
 for param in gas_params:
     if param in planet_params:
         planet_params[param] *= PRESSURE_FRACTION
-        
-        
+
+mass_grid = np.array([
+    0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
+    0.070, 0.072, 0.075, 0.080, 0.090, 0.100, 0.110,
+    0.130, 0.150, 0.170, 0.200, 0.300, 0.400, 0.500,
+    0.600, 0.700, 0.800, 0.900, 1.000, 1.100, 1.200,
+    1.300, 1.400
+])
+
+teff_grid = np.array([
+    2142., 2406., 2545., 2706., 2784., 2831., 2870.,
+    2906., 2911., 2919., 2931., 2956., 2998., 3016.,
+    3052., 3088., 3127., 3196., 3404., 3582., 3731.,
+    3868., 3998., 4120., 4232., 4330., 4421., 4505.,
+    4588., 4671.
+])
+
+log_L_grid = np.array([
+    -3.13, -2.79, -2.57, -2.17, -1.92, -1.74, -1.61,
+    -1.51, -1.49, -1.46, -1.42, -1.36, -1.44, -1.39,
+    -1.32, -1.25, -1.18, -1.10, -0.86, -0.68, -0.54,
+    -0.42, -0.31, -0.21, -0.13, -0.05,  0.02,  0.09,
+     0.15,  0.22
+])
+
+get_teff = interp1d(
+    mass_grid, teff_grid,
+    kind='linear',
+    bounds_error=False,
+    fill_value='extrapolate'
+)
+
+get_logL = interp1d(
+    mass_grid, log_L_grid,
+    kind='linear',
+    bounds_error=False,
+    fill_value='extrapolate'
+)
+
+mass_grid_2_gyr = np.array([
+    0.070, 0.072, 0.075, 0.080, 0.090, 0.100, 0.110, 0.130, 0.150, 0.170,
+    0.200, 0.300, 0.400, 0.500, 0.600, 0.700, 0.800, 0.900, 1.000, 1.100, 1.200
+])
+
+teff_grid_2_gyr = np.array([
+    1631., 1790., 2041., 2343., 2644., 2811., 2916., 3046., 3131., 3192.,
+    3262., 3416., 3520., 3680., 3979., 4418., 4878., 5297., 5697., 5996., 6053.
+])
+
+# Logarithmic luminosities log(L/L_sun) at 2 Gyr
+log_l_grid_2gyr = np.array([
+    -4.22, -4.05, -3.81, -3.52, -3.21, -3.02, -2.88, -2.69, -2.54, -2.42,
+    -2.28, -1.94, -1.68, -1.42, -1.13, -0.83, -0.54, -0.27, -0.01,  0.25,  0.45
+])
+
+teff_grid_4_gyr = np.array([
+    1631., 1790., 2041., 2343., 2644., 2811., 2916., 3046., 3131., 3192.,
+    3262., 3416., 3520., 3680., 3979., 4418., 4878., 5297., 5697., 5996., 6053.
+])
+
+# Logarithmic luminosities log(L/L_sun) at 4 Gyr
+
+log_l_grid_4gyr = np.array([
+    -4.29, -4.12, -3.88, -3.58, -3.25, -3.06, -2.92, -2.73, -2.58, -2.46,
+    -2.32, -1.97, -1.71, -1.45, -1.15, -0.85, -0.56, -0.29, -0.03,  0.23,  0.43
+])
+
+get_2gyr_logL = interp1d(mass_grid_2_gyr, log_l_grid_4gyr, kind='linear', bounds_error=False, fill_value="extrapolate")
+get_2gyr_teff = interp1d(mass_grid_2_gyr, teff_grid_4_gyr, kind='linear', bounds_error=False, fill_value="extrapolate")
+
 def stellar_mass_to_temp_flux(M_star, a):
-    # Mass-luminosity relation (low-mass main-sequence stars)
-    L_star = lsol * M_star**3.5
+    startemp = float(get_2gyr_teff(M_star))
+    
+    log_L = float(get_2gyr_logL(M_star))
+    L_star = (10**log_L) * lsol
 
-    # Mass-radius relation
-    R_star = rsol * M_star**0.8
+    a_m = a * 1.496e11
 
-    # Effective temperature
-    startemp = (L_star / (4 * np.pi * R_star**2 * sigma_SB))**0.25
-
-    # Convert orbital distance to meters
-    AU = 1.496e11
-    a_m = a * AU
-
-    # Flux at planet
     flux = L_star / (4 * np.pi * a_m**2)
 
     return startemp, flux
@@ -152,7 +229,7 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     startemp, flux = stellar_mass_to_temp_flux(mstar, au)
     
     # Cap flux as it crashes model at low AU
-    flux = min(flux, 2000)
+    # flux = min(flux, 2000)
     
     planet_params['gravity'] = g_new
     planet_params['radius'] = r_new
@@ -167,9 +244,12 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     r_b = calc_r_B(m_c, t_eq)
     rho_rcb = calc_rho_rcb(r_b, r_rcb)
     r_prime_b = calc_r_prime_b(r_b)
+    log_L = float(get_logL(mstar))
+    L_star = (10**log_L) * lsol
+    Lxuv0 = get_lxuv0_from_bolometric(L_star)
 
     retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 0.5)
-    times, GCRs = evolve_atmosphere(
+    times, GCRs, xuvs = evolve_atmosphere(
                 Mc_me=mass_ratio,
                 a_AU=au,
                 t_disk_Myr=3.0,
@@ -177,13 +257,13 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
                 init=F_INIT,
                 dusty=True,
                 eta=0.1,
-                Lxuv0=2.05e22,
+                Lxuv0=Lxuv0,
                 t_sat_Myr=100,
                 decay_index=1.1
             )
 
     # Targeting a time of 2 Gyr
-    target_time = 2 * 10**9
+    target_time = 4.5 * 10**9
     mask = times > target_time
     target_index = np.argmax(mask)
     F = GCRs[target_index]
@@ -210,6 +290,9 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
         precision=PRECISION,
         outputtype=OUTPUT_TYPE
     )
+    
+    planet.debug = True
+    planet.verbose = True
 
     # Configure and run
     planet.configure(**planet_params)
@@ -218,7 +301,7 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     for year in range(0, N_YEARS):
         planet = model_earthlike_stepwise(planet, mass_ratio, year+1)
         
-    if planet == 0:
+    if planet == 0 or planet is None:
         return [0,0]
         
     veg = planet.inspect("veggpp", tavg=True)
@@ -255,6 +338,9 @@ def model_fun(mass_ratio, resolution):
             
             try:
                 veg_amt = calculate_veg(mass_ratio, mstar, au, resolution, to_append)
+                flux = stellar_mass_to_temp_flux(mstar, au)
+                veg_amt.append(flux[0])
+                veg_amt.append(flux[1])
                 output_dict.setdefault(ms, {})[au_key] = [float(v) for v in veg_amt]
                 with open(output_file, "w") as f:
                     json.dump(output_dict, f, indent=4)
