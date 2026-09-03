@@ -1,0 +1,5 @@
+{
+  "name": "UGA Astrophysics Research Hall",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh"
+}
