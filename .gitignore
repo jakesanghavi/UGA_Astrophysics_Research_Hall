@@ -50,3 +50,7 @@ model_earth_manual
 # (re-included despite the broad **.json / **.txt ignores above)
 !.cursor/environment.json
 !requirements.txt
+
+# Stellar isochrone data required by prod_job/run_model.py at runtime
+# (re-included despite the broad **.dat ignore above)
+!prod_job/5interpolated_seiss_1E9.dat
