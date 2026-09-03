@@ -42,3 +42,11 @@ thing**
 new**
 
 model_earth_manual
+
+# Local Python virtual environment created by .cursor/install.sh
+.venv/
+
+# Cloud Agent environment configuration and project dependency manifest
+# (re-included despite the broad **.json / **.txt ignores above)
+!.cursor/environment.json
+!requirements.txt

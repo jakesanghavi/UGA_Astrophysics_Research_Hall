@@ -1,0 +1,22 @@
+# Python dependencies for the UGA Astrophysics Research Hall codebase.
+# Versions pinned to what was validated in the Cloud Agent environment.
+#
+# Installing exoplasim additionally requires a system toolchain
+# (gcc, g++, gfortran, OpenMPI) to compile the PlaSim climate model.
+# See .cursor/install.sh for the full environment bootstrap.
+
+numpy==2.5.2
+scipy==1.18.1
+astropy==8.0.1
+matplotlib==3.11.1
+pandas==3.0.5
+seaborn==0.13.2
+statsmodels==0.15.0
+wakepy==1.0.0
+
+# Climate modeling (compiles a Fortran model on first use)
+exoplasim==3.4.2
+
+# Optional ExoPlaSim output backends used by some scripts (.nc / HDF5)
+netCDF4==1.7.4
+h5py==3.16.0
