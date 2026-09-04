@@ -13,6 +13,7 @@ import base64
 import pickle
 import uuid
 from scipy.interpolate import interp1d
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 ### PLANET CONFIGURATION ###
 N_YEARS = 5
@@ -21,6 +22,14 @@ X_fe_m=0.081
 RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
 NCPUS = 4
+# Number of independent grid points (planets) to run concurrently. Each worker
+# launches its own ExoPlaSim process using NCPUS MPI ranks, so keep
+# WORKERS * NCPUS <= number of physical cores (e.g. 2 * 4 = 8 on an M1).
+# WORKERS = 1 reproduces the original fully sequential behavior.
+WORKERS = 2
+# On an intermittent PlaSim crash, retry the run this many times with a fresh
+# random seed before giving up and recording the point as crashed.
+MAX_RETRIES = 2
 NLAYERS = 10
 PRECISION = 4
 OUTPUT_TYPE = '.nc'
@@ -87,21 +96,27 @@ def core_density_noack(m_p, cmf, r_c):
 def core_mass_noack(r_c, rho_c):
     return (4/3)*np.pi*(r_c**3)*rho_c
 
-def try_run_planet(planet):
+def try_run_planet(planet, years):
     # Serialize planet into base64 string for passing via stdin
     data = pickle.dumps(planet)
     b64 = base64.b64encode(data).decode()
 
-    code = r"""
+    # Run all requested years inside a single isolated subprocess instead of
+    # spawning one interpreter per year. Postprocessing is skipped for every
+    # year except the last: the caller only inspects the final year, so this
+    # avoids redundant pyburn passes while producing bit-identical physics and
+    # final-year output.
+    code = f"""
 import pickle, base64, exoplasim
 
-b64 = input()
-planet = pickle.loads(base64.b64decode(b64))
+planet = pickle.loads(base64.b64decode(input()))
 
-planet.run(years=1, clean=False)
+n = {int(years)}
+if n > 1:
+    planet.run(years=n - 1, postprocess=False, clean=False)
+planet.run(years=1, postprocess=True, clean=False)
 
-out = base64.b64encode(pickle.dumps(planet)).decode()
-print(out)
+print(base64.b64encode(pickle.dumps(planet)).decode())
 """
 
     proc = subprocess.run(
@@ -110,30 +125,16 @@ print(out)
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    
-    print(proc.returncode)
-
-    if proc.stdout:
-        print("STDOUT:\n", proc.stdout.decode())
-
-    # Decode and print stderr
-    if proc.stderr:
-        print("STDERR:\n", proc.stderr.decode())
 
     # Crash case (SIGILL, segfault, etc)
     if proc.returncode != 0:
+        print(f"[try_run_planet] subprocess exited with code {proc.returncode}")
+        if proc.stderr:
+            print("STDERR (tail):\n", proc.stderr.decode()[-2000:])
         return 0
 
     out_b64 = proc.stdout.decode().strip()
-    new_planet = pickle.loads(base64.b64decode(out_b64))
-
-    return new_planet
-
-def model_earthlike_stepwise(planet, year, mass_ratio):
-    # planet.run(years=1, clean=False)
-    planet = try_run_planet(planet)
-
-    return planet
+    return pickle.loads(base64.b64decode(out_b64))
 
 
 planet_params = {
@@ -247,12 +248,16 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     
     # Cap flux as it crashes model at low AU
     # flux = min(flux, 2000)
-    
-    planet_params['gravity'] = g_new
-    planet_params['radius'] = r_new
-    # planet_params['flux'] = BASE_FLUX / (au**2)
-    planet_params['startemp'] = startemp
-    planet_params['flux'] = flux
+
+    # Work on a per-call copy so concurrent grid points never clobber each
+    # other's configuration (and so results are identical to the sequential run).
+    local_params = dict(planet_params)
+
+    local_params['gravity'] = g_new
+    local_params['radius'] = r_new
+    # local_params['flux'] = BASE_FLUX / (au**2)
+    local_params['startemp'] = startemp
+    local_params['flux'] = flux
     
     CMF = cmf_noack()
     r_c = core_radius_noack(mass_ratio, CMF)
@@ -292,38 +297,65 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     # as the simulation stops when M_atm == 0
     if target_index <= 0:
         F = 0
-    planet_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
-    planet_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
+    local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
+    local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
-    try:
-        shutil.rmtree(f"custom_earthlike_model{to_append}")
-        shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
-    except:
-        pass
-    # Create the model
-    planet = exo.Model(
-        workdir=f"custom_earthlike_model{to_append}",
-        modelname=f"custom_earthlike_model{to_append}",
-        resolution=resolution,
-        ncpus=NCPUS,
-        layers=NLAYERS,
-        precision=PRECISION,
-        outputtype=OUTPUT_TYPE
-    )
-    
-    planet.debug = True
-    planet.verbose = True
+    # When running grid points concurrently, each planet launches its own
+    # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
+    # so concurrent runs fight over the same cores. "--bind-to none" lets the OS
+    # scheduler spread them across all cores. Single-run behavior is unchanged.
+    mpi_opts = "--bind-to none" if WORKERS > 1 else None
 
-    # Configure and run
-    planet.configure(**planet_params)
-    planet.exportcfg()
+    # Low-gravity planets at high insolation can hit an intermittent, weather-
+    # (and therefore seed-) dependent numerical instability in PlaSim's surface-
+    # flux scheme ("negative z/z0"). Retry a crashed run up to MAX_RETRIES times
+    # with a fresh random seed; a different initial-noise realization often
+    # avoids the blow-up. If every attempt crashes, return [None, None] so the
+    # caller can tell a genuine crash apart from a real zero-vegetation result.
+    planet = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            shutil.rmtree(f"custom_earthlike_model{to_append}")
+            shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
+        except:
+            pass
 
-    for year in range(0, N_YEARS):
-        planet = model_earthlike_stepwise(planet, mass_ratio, year+1)
-        
+        planet = exo.Model(
+            workdir=f"custom_earthlike_model{to_append}",
+            modelname=f"custom_earthlike_model{to_append}",
+            resolution=resolution,
+            ncpus=NCPUS,
+            layers=NLAYERS,
+            precision=PRECISION,
+            outputtype=OUTPUT_TYPE,
+            mpi_opts=mpi_opts
+        )
+
+        planet.debug = True
+        planet.verbose = True
+
+        planet.configure(**local_params)
+        # Distinct nonzero seed per attempt, from OS entropy so it is independent
+        # across worker processes. PlaSim seeds its initial white-noise
+        # perturbation from this instead of the wall clock.
+        seed = int.from_bytes(os.urandom(4), "little") % (2 ** 31 - 1) or 1
+        planet._edit_namelist("plasim_namelist", "SEED", str(seed))
+        planet.exportcfg()
+
+        planet = try_run_planet(planet, N_YEARS)
+
+        if planet != 0 and planet is not None:
+            break  # success
+
+        if attempt < MAX_RETRIES:
+            print(f"[calculate_veg] run crashed (mass={mass_ratio}, mstar={mstar}, "
+                  f"au={au}); retrying with a new seed "
+                  f"({attempt + 1}/{MAX_RETRIES})")
+
     if planet == 0 or planet is None:
-        return [0,0]
-        
+        # Every attempt crashed: distinct from a genuine zero-vegetation result.
+        return [None, None]
+
     veg = planet.inspect("veggpp", tavg=True)
     land = planet.inspect('lsm')
     land = np.sum(land, axis=0)
@@ -335,35 +367,97 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
         
     return [average_veg, tot_veg]
 
-def model_fun(mass_ratio, resolution):
-    # output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
+def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
+    """Compute a single grid point. Runs inside a worker process for isolation
+    (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
+    veg_amt = calculate_veg(mass_ratio, mstar, au, resolution, workdir_suffix)
+    flux = stellar_mass_to_temp_flux(mstar, au)
+    veg_amt.append(flux[0])
+    veg_amt.append(flux[1])
+    # A crashed run yields None for the vegetation entries (kept as JSON null),
+    # which is distinct from a genuine 0.0 vegetation result.
+    return [float(v) if v is not None else None for v in veg_amt]
+
+
+def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None):
+    """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
+
+    points      : explicit list of (mstar, au) tuples to evaluate. If None
+                  (default), sweep every star in MSTARS across its habitable-zone
+                  percentiles (the original behavior).
+    file_tag    : inserted into the default output filename (e.g. "_massonly")
+                  so alternate configurations are easy to tell apart.
+    output_file : full override of the output filename (takes precedence over
+                  file_tag), used e.g. for the Earth reference baseline.
+    """
     # Change name based on resolution
-    to_append = "" if resolution == 'T21' else resolution
-    output_file = f"16cpus_test_{str(mass_ratio).replace('.', '')}{to_append}.json"
+    res_suffix = "" if resolution == 'T21' else resolution
+    if output_file is None:
+        output_file = f"16cpus_test_{str(mass_ratio).replace('.', '')}{file_tag}{res_suffix}.json"
 
     if os.path.exists(output_file):
         with open(output_file, "r") as f:
             output_dict = json.load(f)
     else:
         output_dict = {}
-        
-    for mstar in MSTARS:
+
+    # Which (stellar mass, semi-major axis) points to evaluate for this mass.
+    if points is None:
+        points = [(mstar, au) for mstar in MSTARS for au in calc_hz_percentiles(mstar)]
+
+    # Collect the grid points that still need to be computed.
+    tasks = []
+    for mstar, au in points:
         ms = str(mstar)
-        aus = calc_hz_percentiles(mstar)
-        for au in aus:
-            au_key = str(au)
-            
-            if ms in output_dict and au_key in output_dict[ms]:
-                continue
-            
+        au_key = str(au)
+        existing = output_dict.get(ms, {}).get(au_key)
+        # Skip points already computed successfully; re-attempt ones that
+        # previously crashed (vegetation stored as null).
+        if existing is not None and existing[0] is not None:
+            continue
+        # Unique workdir per task so concurrent runs never share a directory.
+        safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
+        workdir_suffix = f"{res_suffix}_{safe}"
+        tasks.append((ms, au_key, mstar, au, workdir_suffix))
+
+    if not tasks:
+        return
+
+    def _save(ms, au_key, result):
+        output_dict.setdefault(ms, {})[au_key] = result
+        with open(output_file, "w") as f:
+            json.dump(output_dict, f, indent=4)
+
+    # Run the first task on its own first: this compiles the ExoPlaSim binary
+    # (a shared, one-time step) before any concurrent workers start, avoiding a
+    # compilation race. It is also the whole job when WORKERS == 1.
+    ms, au_key, mstar, au, workdir_suffix = tasks[0]
+    try:
+        _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
+    except Exception as e:
+        print(f"Error! ({ms}, {au_key}): {e}")
+
+    remaining = tasks[1:]
+    if not remaining:
+        return
+
+    if WORKERS <= 1:
+        for ms, au_key, mstar, au, workdir_suffix in remaining:
             try:
-                veg_amt = calculate_veg(mass_ratio, mstar, au, resolution, to_append)
-                flux = stellar_mass_to_temp_flux(mstar, au)
-                veg_amt.append(flux[0])
-                veg_amt.append(flux[1])
-                output_dict.setdefault(ms, {})[au_key] = [float(v) for v in veg_amt]
-                with open(output_file, "w") as f:
-                    json.dump(output_dict, f, indent=4)
+                _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
             except Exception as e:
-                print(f"Error!: {e}")
-                sys.exit()
+                print(f"Error! ({ms}, {au_key}): {e}")
+        return
+
+    # Independent grid points run concurrently in isolated worker processes.
+    with ProcessPoolExecutor(max_workers=WORKERS) as pool:
+        future_map = {
+            pool.submit(_grid_point, mass_ratio, mstar, au, resolution, workdir_suffix): (ms, au_key)
+            for ms, au_key, mstar, au, workdir_suffix in remaining
+        }
+        for fut in as_completed(future_map):
+            ms, au_key = future_map[fut]
+            try:
+                _save(ms, au_key, fut.result())
+            except Exception as e:
+                print(f"Error! ({ms}, {au_key}): {e}")
