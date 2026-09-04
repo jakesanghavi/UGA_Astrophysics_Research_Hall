@@ -73,6 +73,29 @@ mh.model_fun(1.0, resolution="T21")  # one mass ratio
 
 A single T21 ExoPlaSim year takes on the order of a couple of minutes.
 
+## Performance (prod_job)
+
+The pipeline is sped up in two functionally-equivalent ways:
+
+- Grid-level parallelism: `model_helpers.WORKERS` controls how many independent
+  grid points run at once, each in its own worker process (ExoPlaSim uses
+  process-wide `os.chdir`, so concurrency must be process-based, not threads).
+  Keep `WORKERS * NCPUS <= physical cores` (e.g. `WORKERS=2`, `NCPUS=4` on an
+  8-core M1). `WORKERS=1` restores fully sequential behavior. When `WORKERS > 1`,
+  runs launch with `mpiexec --bind-to none` so concurrent `mpiexec` invocations
+  don't pin to the same cores (otherwise parallel is *slower*, not faster).
+- Fewer subprocess/postprocess passes: all `N_YEARS` run in a single subprocess,
+  and intermediate years skip pyburn postprocessing (only the final year, which
+  is the only one inspected, is postprocessed).
+
+Because `model_fun` uses a process pool, `run_model.py` guards its sweep with
+`if __name__ == "__main__":` — required so macOS `spawn` workers don't re-run it.
+
+Note: ExoPlaSim (dynamic vegetation + chaotic climate) is **not deterministic**
+run-to-run — repeating an identical run varies the vegetation output by several
+percent. Exact bit-reproducibility is not expected; compare results
+distributionally, not by exact equality.
+
 ## Cursor Cloud specific instructions
 
 - Use the `.venv` created by `.cursor/install.sh`; do not `pip install` into the
