@@ -112,7 +112,8 @@ def au_columns(data, star_rows):
     return per_star
 
 
-def plot_grid(data, star_rows, norm, yscale="linear", sharey=False, title_suffix=""):
+def plot_grid(data, star_rows, norm, yscale="linear", sharey=False,
+              title_suffix="", annotate=False):
     suffixes = [mass_suffix(m) for m in MASS_RATIOS]
     star_rows = rows_present(data, star_rows)
     per_star = au_columns(data, star_rows)
@@ -142,9 +143,13 @@ def plot_grid(data, star_rows, norm, yscale="linear", sharey=False, title_suffix
             all_values.extend(values)
             global_max = max(global_max, values.max())
 
-            ax.bar(x, values)
+            bars = ax.bar(x, values)
             ax.axhline(1.0, color="0.4", lw=0.8, ls="--")  # Earth reference = 1
             ax.set_title(f"M*={mstar}, AU={round(float(au), 2)}")
+            # Print each bar's value (only where it won't overcrowd the panel).
+            if annotate:
+                ax.bar_label(bars, fmt="%.2f", padding=2, fontsize=5)
+                ax.margins(y=0.12)  # headroom so the top label isn't clipped
 
             # x labels on the bottom row (the only row in mass_only mode).
             if i == nrows - 1:
@@ -179,10 +184,11 @@ def main():
     data = load_data()
     norm = load_earth_baseline()
     if MASS_ONLY:
-        # A single row -- "shared vs independent" y-scaling is meaningless, so
-        # just produce a linear and a log version.
-        plot_grid(data, STAR_ROWS, norm, yscale="linear", title_suffix="mass_only linear scale")
-        plot_grid(data, STAR_ROWS, norm, yscale="log", title_suffix="mass_only log10 scale")
+        # A single row of ratios clustered near 1 -- a log scale is unreadable
+        # here (sub-decade range, sparse ticks), so use a linear scale from 0
+        # with the Earth = 1 line and per-bar value labels.
+        plot_grid(data, STAR_ROWS, norm, yscale="linear",
+                  title_suffix="mass_only", annotate=True)
     else:
         plot_grid(data, STAR_ROWS, norm, yscale="linear", sharey=True,
                   title_suffix="Shared linear scale")
