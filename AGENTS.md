@@ -96,6 +96,17 @@ run-to-run — repeating an identical run varies the vegetation output by severa
 percent. Exact bit-reproducibility is not expected; compare results
 distributionally, not by exact equality.
 
+### Crash handling
+
+Low-gravity planets (small mass) at high insolation (close to the star) can hit
+an intermittent, seed-dependent numerical instability in PlaSim's surface-flux
+scheme (`negative z/z0`), which crashes the run. `calculate_veg` retries a
+crashed run up to `MAX_RETRIES` (default 2) times with a fresh random seed. If
+every attempt still crashes, the grid point's vegetation entries are recorded as
+JSON `null` (`[null, null, startemp, flux]`), which is distinct from a genuine
+zero-vegetation result (`[0.0, 0.0, ...]`). On a rerun, successfully-computed
+points are skipped but `null` (crashed) points are re-attempted.
+
 ## Cursor Cloud specific instructions
 
 - Use the `.venv` created by `.cursor/install.sh`; do not `pip install` into the

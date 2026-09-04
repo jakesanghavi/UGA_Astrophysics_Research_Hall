@@ -27,6 +27,9 @@ NCPUS = 4
 # WORKERS * NCPUS <= number of physical cores (e.g. 2 * 4 = 8 on an M1).
 # WORKERS = 1 reproduces the original fully sequential behavior.
 WORKERS = 2
+# On an intermittent PlaSim crash, retry the run this many times with a fresh
+# random seed before giving up and recording the point as crashed.
+MAX_RETRIES = 2
 NLAYERS = 10
 PRECISION = 4
 OUTPUT_TYPE = '.nc'
@@ -297,41 +300,62 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
     local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
-    try:
-        shutil.rmtree(f"custom_earthlike_model{to_append}")
-        shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
-    except:
-        pass
-    # Create the model
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
     # so concurrent runs fight over the same cores. "--bind-to none" lets the OS
     # scheduler spread them across all cores. Single-run behavior is unchanged.
     mpi_opts = "--bind-to none" if WORKERS > 1 else None
 
-    planet = exo.Model(
-        workdir=f"custom_earthlike_model{to_append}",
-        modelname=f"custom_earthlike_model{to_append}",
-        resolution=resolution,
-        ncpus=NCPUS,
-        layers=NLAYERS,
-        precision=PRECISION,
-        outputtype=OUTPUT_TYPE,
-        mpi_opts=mpi_opts
-    )
-    
-    planet.debug = True
-    planet.verbose = True
+    # Low-gravity planets at high insolation can hit an intermittent, weather-
+    # (and therefore seed-) dependent numerical instability in PlaSim's surface-
+    # flux scheme ("negative z/z0"). Retry a crashed run up to MAX_RETRIES times
+    # with a fresh random seed; a different initial-noise realization often
+    # avoids the blow-up. If every attempt crashes, return [None, None] so the
+    # caller can tell a genuine crash apart from a real zero-vegetation result.
+    planet = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            shutil.rmtree(f"custom_earthlike_model{to_append}")
+            shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
+        except:
+            pass
 
-    # Configure and run
-    planet.configure(**local_params)
-    planet.exportcfg()
+        planet = exo.Model(
+            workdir=f"custom_earthlike_model{to_append}",
+            modelname=f"custom_earthlike_model{to_append}",
+            resolution=resolution,
+            ncpus=NCPUS,
+            layers=NLAYERS,
+            precision=PRECISION,
+            outputtype=OUTPUT_TYPE,
+            mpi_opts=mpi_opts
+        )
 
-    planet = try_run_planet(planet, N_YEARS)
+        planet.debug = True
+        planet.verbose = True
+
+        planet.configure(**local_params)
+        # Distinct nonzero seed per attempt, from OS entropy so it is independent
+        # across worker processes. PlaSim seeds its initial white-noise
+        # perturbation from this instead of the wall clock.
+        seed = int.from_bytes(os.urandom(4), "little") % (2 ** 31 - 1) or 1
+        planet._edit_namelist("plasim_namelist", "SEED", str(seed))
+        planet.exportcfg()
+
+        planet = try_run_planet(planet, N_YEARS)
+
+        if planet != 0 and planet is not None:
+            break  # success
+
+        if attempt < MAX_RETRIES:
+            print(f"[calculate_veg] run crashed (mass={mass_ratio}, mstar={mstar}, "
+                  f"au={au}); retrying with a new seed "
+                  f"({attempt + 1}/{MAX_RETRIES})")
 
     if planet == 0 or planet is None:
-        return [0,0]
-        
+        # Every attempt crashed: distinct from a genuine zero-vegetation result.
+        return [None, None]
+
     veg = planet.inspect("veggpp", tavg=True)
     land = planet.inspect('lsm')
     land = np.sum(land, axis=0)
@@ -350,7 +374,9 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
     flux = stellar_mass_to_temp_flux(mstar, au)
     veg_amt.append(flux[0])
     veg_amt.append(flux[1])
-    return [float(v) for v in veg_amt]
+    # A crashed run yields None for the vegetation entries (kept as JSON null),
+    # which is distinct from a genuine 0.0 vegetation result.
+    return [float(v) if v is not None else None for v in veg_amt]
 
 
 def model_fun(mass_ratio, resolution):
@@ -371,7 +397,10 @@ def model_fun(mass_ratio, resolution):
         ms = str(mstar)
         for au in calc_hz_percentiles(mstar):
             au_key = str(au)
-            if ms in output_dict and au_key in output_dict[ms]:
+            existing = output_dict.get(ms, {}).get(au_key)
+            # Skip points already computed successfully; re-attempt ones that
+            # previously crashed (vegetation stored as null).
+            if existing is not None and existing[0] is not None:
                 continue
             # Unique workdir per task so concurrent runs never share a directory.
             safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
