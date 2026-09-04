@@ -379,11 +379,21 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
     return [float(v) if v is not None else None for v in veg_amt]
 
 
-def model_fun(mass_ratio, resolution):
-    # output_file = f"wave_veg_json_FI_{F_INIT}_MP_{MASS_RATIO}_NY_{N_YEARS}.json"
+def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None):
+    """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
+
+    points      : explicit list of (mstar, au) tuples to evaluate. If None
+                  (default), sweep every star in MSTARS across its habitable-zone
+                  percentiles (the original behavior).
+    file_tag    : inserted into the default output filename (e.g. "_massonly")
+                  so alternate configurations are easy to tell apart.
+    output_file : full override of the output filename (takes precedence over
+                  file_tag), used e.g. for the Earth reference baseline.
+    """
     # Change name based on resolution
     res_suffix = "" if resolution == 'T21' else resolution
-    output_file = f"16cpus_test_{str(mass_ratio).replace('.', '')}{res_suffix}.json"
+    if output_file is None:
+        output_file = f"16cpus_test_{str(mass_ratio).replace('.', '')}{file_tag}{res_suffix}.json"
 
     if os.path.exists(output_file):
         with open(output_file, "r") as f:
@@ -391,21 +401,24 @@ def model_fun(mass_ratio, resolution):
     else:
         output_dict = {}
 
+    # Which (stellar mass, semi-major axis) points to evaluate for this mass.
+    if points is None:
+        points = [(mstar, au) for mstar in MSTARS for au in calc_hz_percentiles(mstar)]
+
     # Collect the grid points that still need to be computed.
     tasks = []
-    for mstar in MSTARS:
+    for mstar, au in points:
         ms = str(mstar)
-        for au in calc_hz_percentiles(mstar):
-            au_key = str(au)
-            existing = output_dict.get(ms, {}).get(au_key)
-            # Skip points already computed successfully; re-attempt ones that
-            # previously crashed (vegetation stored as null).
-            if existing is not None and existing[0] is not None:
-                continue
-            # Unique workdir per task so concurrent runs never share a directory.
-            safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
-            workdir_suffix = f"{res_suffix}_{safe}"
-            tasks.append((ms, au_key, mstar, au, workdir_suffix))
+        au_key = str(au)
+        existing = output_dict.get(ms, {}).get(au_key)
+        # Skip points already computed successfully; re-attempt ones that
+        # previously crashed (vegetation stored as null).
+        if existing is not None and existing[0] is not None:
+            continue
+        # Unique workdir per task so concurrent runs never share a directory.
+        safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
+        workdir_suffix = f"{res_suffix}_{safe}"
+        tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:
         return

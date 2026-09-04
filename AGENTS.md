@@ -46,13 +46,25 @@ virtualenv:
 ```bash
 source .venv/bin/activate
 cd prod_job
-# run_model.py / veg_utils.calc_hz_percentiles read this isochrone from the CWD:
-cp ../Sapelo2/5interpolated_seiss_1E9.dat .
 python run_model.py
 ```
 
-Note: `5interpolated_seiss_1E9.dat` is git-ignored (`**.dat`) and currently only
-lives in `Sapelo2/`, so copy it into the working directory before running.
+(`prod_job/5interpolated_seiss_1E9.dat`, the isochrone `run_model.py` reads at
+runtime, is committed, so no copy step is needed.)
+
+### Run modes and the Earth reference
+
+`run_model.py` has a `RUN_MODE` switch at the top:
+
+- `"normal"` — the full sweep over stellar masses (`MSTARS`) and each star's
+  habitable-zone distances. Output: `16cpus_test_<mass>.json`.
+- `"mass_only"` — vary planet mass only; every planet sits at 1 AU around a
+  1 solar-mass star. Output: `16cpus_test_<mass>_massonly.json` (the `_massonly`
+  tag distinguishes it from a normal run).
+
+Regardless of `RUN_MODE`, every run first computes an **Earth reference**
+(1 Earth-mass planet at 1 AU around a 1 solar-mass star) and stores it in
+`earth_reference.json`, giving a known-normal point to compare against.
 
 ## Testing
 
