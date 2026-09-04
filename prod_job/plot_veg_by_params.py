@@ -1,12 +1,3 @@
-"""Bar-grid plots of vegetation (GPP) versus planet mass.
-
-For each (stellar mass, semi-major axis) cell, plot a bar chart of normalized
-GPP across planet masses. Reads the per-mass JSON files produced by
-``run_model.py`` (normal mode) from the current working directory.
-
-Tidied copy of ``Sapelo2/Various/mod_plot.py`` — same plots, cleaned up, using
-the shared paper style in ``paper.mplstyle``.
-"""
 import json
 import os
 
