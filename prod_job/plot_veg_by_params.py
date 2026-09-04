@@ -32,13 +32,13 @@ def mass_suffix(mass):
     return str(mass).replace(".", "")
 
 
-def load_data():
+def load_data(mass_only=""):
     """Load {mass_suffix: {mstar: {au: [...]}}} from the per-mass JSON files."""
     res_tag = RESOLUTION if RESOLUTION == "T42" else ""
     data = {}
     for mass in MASS_RATIOS:
         suffix = mass_suffix(mass)
-        filename = f"16cpus_test_{suffix}{res_tag}.json"
+        filename = f"16cpus_test_{suffix}{res_tag}{mass_only}.json"
         if not os.path.exists(filename):
             print(f"Warning: {filename} not found; skipping mass {mass}.")
             data[suffix] = {}
@@ -131,7 +131,8 @@ def plot_grid(data, star_rows, yscale="linear", sharey=False, title_suffix=""):
 
 
 def main():
-    data = load_data()
+    mass_only = "_massonly"
+    data = load_data(mass_only=mass_only)
     plot_grid(data, STAR_ROWS, yscale="linear", sharey=True,
               title_suffix="Shared linear scale")
     plot_grid(data, STAR_ROWS, yscale="log", sharey=True,

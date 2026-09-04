@@ -16,7 +16,7 @@ from scipy.interpolate import interp1d
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 5
+N_YEARS = 3
 X_fe = 0.32
 X_fe_m=0.081
 RESOLUTION = 'T21'

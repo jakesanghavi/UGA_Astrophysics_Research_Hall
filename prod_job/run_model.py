@@ -7,7 +7,7 @@ from time import time, strftime, gmtime
 # "mass_only" : vary planet mass only; every planet is placed at 1 AU around a
 #               1 solar-mass star. Output files get a "_massonly" tag so they are
 #               easy to distinguish from a normal run.
-RUN_MODE = "normal"
+RUN_MODE = "mass_only"
 
 # Fixed star/orbit used for the Earth reference and for "mass_only" runs.
 REFERENCE_MSTAR = 1.0   # solar masses
