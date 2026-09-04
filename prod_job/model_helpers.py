@@ -21,15 +21,26 @@ X_fe = 0.32
 X_fe_m=0.081
 RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
-NCPUS = 4
-# Number of independent grid points (planets) to run concurrently. Each worker
-# launches its own ExoPlaSim process using NCPUS MPI ranks, so keep
-# WORKERS * NCPUS <= number of physical cores (e.g. 2 * 4 = 8 on an M1).
+# NCPUS (MPI ranks per model) and WORKERS (planets run concurrently) can be set
+# from the environment so a batch script can size them to the SLURM allocation.
+# Keep WORKERS * NCPUS <= available cores. The defaults suit a local machine.
+NCPUS = int(os.environ.get("EXOPLASIM_NCPUS", "4"))
+# Each worker launches its own ExoPlaSim process using NCPUS MPI ranks.
 # WORKERS = 1 reproduces the original fully sequential behavior.
-WORKERS = 2
-# On an intermittent PlaSim crash, retry the run this many times with a fresh
-# random seed before giving up and recording the point as crashed.
+WORKERS = int(os.environ.get("EXOPLASIM_WORKERS", "2"))
+# On a crash, retry the run this many times before recording the point as
+# crashed. Each retry uses a fresh seed AND a smaller timestep (see below).
 MAX_RETRIES = 2
+
+# Model timestep in minutes. ExoPlaSim's T21 default is 45 min, tuned for
+# Earth's gravity. Low-gravity planets have a larger atmospheric scale height
+# and need a finer step for numerical stability, so calculate_veg scales this
+# down with surface gravity (and shrinks it further on each retry), floored at
+# MIN_TIMESTEP_MIN so runs don't become absurdly slow.
+BASE_TIMESTEP_MIN = 45.0
+MIN_TIMESTEP_MIN = 3.0
+G_EARTH = 9.80665
+
 NLAYERS = 10
 PRECISION = 4
 OUTPUT_TYPE = '.nc'
@@ -306,14 +317,22 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     # scheduler spread them across all cores. Single-run behavior is unchanged.
     mpi_opts = "--bind-to none" if WORKERS > 1 else None
 
-    # Low-gravity planets at high insolation can hit an intermittent, weather-
-    # (and therefore seed-) dependent numerical instability in PlaSim's surface-
-    # flux scheme ("negative z/z0"). Retry a crashed run up to MAX_RETRIES times
-    # with a fresh random seed; a different initial-noise realization often
-    # avoids the blow-up. If every attempt crashes, return [None, None] so the
+    # Low-gravity planets have a larger atmospheric scale height and need a finer
+    # timestep to stay numerically stable, so scale the Earth-tuned default down
+    # with surface gravity (capped at the default, floored so runs stay tractable).
+    base_timestep = max(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * min(1.0, g_new / G_EARTH))
+
+    # Low-gravity planets (especially at high insolation) can still hit an
+    # intermittent, weather- (and therefore seed-) dependent numerical
+    # instability in PlaSim's surface-flux scheme ("negative z/z0"). Retry a
+    # crashed run up to MAX_RETRIES times, each time with a fresh random seed AND
+    # a smaller timestep. If every attempt crashes, return [None, None] so the
     # caller can tell a genuine crash apart from a real zero-vegetation result.
     planet = None
     for attempt in range(MAX_RETRIES + 1):
+        # Halve the timestep on each retry (down to the floor); a finer step is a
+        # more deterministic stability fix than reseeding alone.
+        local_params['timestep'] = max(MIN_TIMESTEP_MIN, base_timestep / (2 ** attempt))
         try:
             shutil.rmtree(f"custom_earthlike_model{to_append}")
             shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
@@ -348,8 +367,9 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
             break  # success
 
         if attempt < MAX_RETRIES:
+            next_dt = max(MIN_TIMESTEP_MIN, base_timestep / (2 ** (attempt + 1)))
             print(f"[calculate_veg] run crashed (mass={mass_ratio}, mstar={mstar}, "
-                  f"au={au}); retrying with a new seed "
+                  f"au={au}); retrying with a new seed and timestep={next_dt:.1f} min "
                   f"({attempt + 1}/{MAX_RETRIES})")
 
     if planet == 0 or planet is None:

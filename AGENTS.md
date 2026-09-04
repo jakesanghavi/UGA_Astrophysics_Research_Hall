@@ -36,9 +36,18 @@ resolution/CPU count is run; subsequent runs reuse the compiled binary.
 ## Running the production job
 
 `prod_job/run_job.sh` is a **SLURM batch script for the Sapelo2 HPC cluster**
-(`#SBATCH`, `module load`, `srun`, and a cluster-specific virtualenv path). It
-will not run as-is on a local machine or in the Cloud Agent VM — those `module`
-and `srun` commands do not exist here.
+(`#SBATCH`, `module load`, and a cluster-specific virtualenv path). It will not
+run as-is on a local machine or in the Cloud Agent VM — those `module` commands
+don't exist here. On the cluster, submit it with `sbatch run_job.sh`.
+
+The batch script runs `python run_model.py` **once** (deliberately not under
+`srun`): exoplasim launches its own `mpiexec -np NCPUS` per planet, and the
+driver's process pool runs several planets concurrently. Running under `srun`
+with multiple tasks would instead start one full copy of the sweep per task,
+oversubscribing cores and clobbering shared output. The script sizes parallelism
+from the allocation by exporting `EXOPLASIM_NCPUS` and `EXOPLASIM_WORKERS`
+(= cores / NCPUS), which `model_helpers` reads. Keep `WORKERS * NCPUS <=`
+allocated cores.
 
 To run the pipeline locally, invoke `run_model.py` directly with the project
 virtualenv:
@@ -125,6 +134,15 @@ every attempt still crashes, the grid point's vegetation entries are recorded as
 JSON `null` (`[null, null, startemp, flux]`), which is distinct from a genuine
 zero-vegetation result (`[0.0, 0.0, ...]`). On a rerun, successfully-computed
 points are skipped but `null` (crashed) points are re-attempted.
+
+As a more deterministic stability aid, `calculate_veg` also scales the model
+timestep down with surface gravity (`BASE_TIMESTEP_MIN * g/g_earth`, floored at
+`MIN_TIMESTEP_MIN`) and halves it further on each retry. The physical reason:
+atmospheric scale height ∝ 1/gravity, and the surface-flux term that blows up
+has a lowest-layer height ∝ 1/gravity, so low-gravity planets need a finer step.
+Near-Earth-gravity planets are essentially unchanged (scale ≈ 1). This won't
+rescue the most extreme low-gravity/high-flux cases (which remain `null`), but it
+converts many borderline ones into clean successes.
 
 ## Cursor Cloud specific instructions
 
