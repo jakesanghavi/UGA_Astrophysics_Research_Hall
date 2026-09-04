@@ -66,6 +66,13 @@ Regardless of `RUN_MODE`, every run first computes an **Earth reference**
 (1 Earth-mass planet at 1 AU around a 1 solar-mass star) and stores it in
 `earth_reference.json`, giving a known-normal point to compare against.
 
+### Plotting
+
+`plot_veg_by_params.py` (run from `prod_job/` after a normal-mode sweep) reads
+the `16cpus_test_<mass>.json` files and writes bar-grid PNGs of normalized GPP
+vs planet mass for each (M*, AU) cell. It uses the shared `paper.mplstyle`
+style and treats crashed (`null`) points as zero.
+
 ## Testing
 
 **The production code is slow.** A full `run_model.py` sweeps every mass ratio in

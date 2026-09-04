@@ -1,0 +1,70 @@
+# Matplotlib Style File for plotting with papers.
+# Fonts - currently cannot use TeX by default...
+text.usetex: False
+
+#Don't want these fonts if want stuff bold
+#font.sans-serif: Helvetica, OpenSans
+#font.family: sans-serif
+font.weight: bold
+figure.figsize: 3.50, 2.50
+figure.dpi: 300
+# Math text here. Custom will make it default the to font.sans-serif family.
+mathtext.fontset : custom
+mathtext.cal : sans
+mathtext.rm : sans
+pdf.fonttype : 42
+ps.fonttype : 42
+#Scatter points
+#===============================================
+scatter.marker: o
+scatter.edgecolors: k
+# Colours.
+# Change the default cycler to a simple rainbow.
+#========================================================================
+#axes.prop_cycle: cycler('color', ['dodgerblue', 'F8A20E', '00A650', '1671C2', '282b80', '000000'])
+axes.prop_cycle: cycler('color', ['steelblue', 'darkorange', 'seagreen', 'firebrick', '282b80', '000000'])
+# Ticks and Axes.
+#=========================================================================
+xtick.top: True
+xtick.bottom: True
+xtick.major.top: True
+xtick.minor.top: True
+xtick.major.bottom: True
+xtick.minor.bottom: True
+ytick.left: True
+ytick.right: True
+ytick.major.left: True
+ytick.minor.left: True
+ytick.major.right: True
+ytick.minor.right: True
+xtick.major.pad: 5
+ytick.major.pad: 5
+ytick.direction: in
+xtick.direction: in
+xtick.minor.visible: True
+ytick.minor.visible: True
+axes.titlesize: 8
+axes.titleweight: bold
+axes.labelsize: 8
+axes.labelweight: bold
+xtick.labelsize: 6
+ytick.labelsize: 6
+axes.linewidth: 1.5
+xtick.major.size: 2.5
+xtick.minor.size: 1.5
+xtick.major.width: 0.75
+xtick.minor.width: 0.75
+ytick.major.size: 2.5
+ytick.minor.size: 1.5
+ytick.major.width: 0.75
+ytick.minor.width: 0.75
+axes.axisbelow: False
+# Legend.
+legend.fontsize: 6
+legend.frameon: True
+legend.borderpad: 1.0
+legend.labelspacing: 0.7
+# Lines and Errorbars.
+lines.solid_capstyle: round
+
+mathtext.bf: sans:bold
