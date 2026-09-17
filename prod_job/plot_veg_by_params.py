@@ -18,13 +18,13 @@ MASS_ONLY = True
 
 # Planet masses (Earth masses). File name suffixes are derived from these to
 # match run_model.py's naming: str(mass).replace('.', '').
-MASS_RATIOS = [0.0266, 0.052, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
+MASS_RATIOS = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
 
 # Stellar masses shown as subplot rows; only those present in the data are used.
 STAR_ROWS = ["0.7", "0.8", "0.9", "1.0", "1.1"]
 
 # Earth reference (1 Mearth, 1 AU, 1 Msun) used to normalize GPP so Earth = 1.
-EARTH_REFERENCE_FILE = "earth_reference.json"
+EARTH_REFERENCE_FILE = "16cpus_test_10_massonly.json"
 
 # Use the paper style that ships next to this script.
 _STYLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper.mplstyle")
