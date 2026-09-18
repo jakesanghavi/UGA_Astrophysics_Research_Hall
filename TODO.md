@@ -22,9 +22,17 @@ this is a backlog of agreed ideas.
   reproducible. Note: exact reproducibility also requires holding `NCPUS` fixed
   (MPI floating-point summation order is not associative).
 
-## c) Seed-ensemble runs to get a distribution
+## c) Seed-ensemble runs to get a distribution (with error bars)
 - Run each grid point multiple times with different seeds and aggregate
   (mean / median / spread) so we characterize the vegetation *distribution*
   rather than a single noisy realization.
 - Depends on (b). Decide on ensemble size per (mass, star, AU); reuse the
   existing `WORKERS` process pool to parallelize ensemble members.
+- Add **error bars** to `plot_veg_by_params.py` from the ensemble spread (e.g.
+  ±1σ or the interquartile range) so the plotted GPP-vs-mass trend shows its
+  uncertainty — important because the current single-run bars carry ~6.5%
+  run-to-run scatter, which is enough to explain the apparent flattening/slight
+  reversal above 1 M⊕.
+- Also ensemble-average the `earth_reference` baseline: today the Earth = 1
+  normalization is set by a single noisy run, which shifts the whole plot's
+  absolute level. Normalizing by an ensemble-mean Earth GPP removes that bias.
