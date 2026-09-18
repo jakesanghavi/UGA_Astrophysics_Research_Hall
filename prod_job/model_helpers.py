@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b, calc_hz_percentiles
 from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
 from atm_mass_frac import evolve_atmosphere
+from atmos_presets import apply_atmos_preset
 import sys
 import json
 import shutil
@@ -63,6 +64,12 @@ MSTARS = [0.7, 0.8, 0.9, 1.0, 1.1]
 
 # Gas settings
 F_INIT = 0.01
+# Atmosphere composition knob. Matches the three model_helpers* variants:
+#   evolved — Earth-like mix + H/He left by evolve_atmosphere (model_helpers.py)
+#   n2      — Earth-like N2/O2, no H/He overlay (model_helpers_n2.py)
+#   co2     — Venus-like CO2, no H/He overlay (model_helpers_co2.py)
+# Production sweeps keep the evolved default. The GPP diagnostic flips this.
+ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "evolved")
 
 os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
 os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
@@ -252,10 +259,91 @@ def stellar_mass_to_temp_flux(M_star, a):
 
     return startemp, flux
 
-def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
+def _inspect_first(planet, names, tavg=False):
+    """Return the first inspect() name that exists; try tavg=True as fallback."""
+    for use_tavg in (tavg, True):
+        for name in names:
+            try:
+                return planet.inspect(name, tavg=use_tavg)
+            except Exception:
+                continue
+    return None
+
+
+def extract_gpp_diagnostics(
+    planet,
+    local_params,
+    mass_ratio,
+    mstar,
+    au,
+    atmos_type,
+    avg_gpp,
+    tot_gpp,
+    gravity,
+    radius,
+    toa_flux,
+    startemp,
+):
+    """Land-mean SIMBA GPP factors from a finished planet's postprocessed output."""
+    from gpp_terms import land_mask_from_lsm, summarize_from_fields
+
+    lsm = _inspect_first(planet, ["lsm"])
+    if lsm is None:
+        raise RuntimeError("could not inspect land mask (lsm)")
+
+    fields = {
+        "gpp": _inspect_first(planet, ["veggpp"]),
+        "gppl": _inspect_first(planet, ["vegppl"]),
+        "gppw": _inspect_first(planet, ["vegppw"]),
+        "lai": _inspect_first(planet, ["veglai"]),
+        "ts": _inspect_first(planet, ["ts", "tsa"]),
+        "rss": _inspect_first(planet, ["rss"]),
+        "ssru": _inspect_first(planet, ["ssru"]),
+        "mrso": _inspect_first(planet, ["mrso"]),
+        "evap": _inspect_first(planet, ["evap"]),
+    }
+    missing = [k for k in ("gpp", "gppl", "gppw", "lai", "ts", "rss") if fields[k] is None]
+    if missing:
+        raise RuntimeError(f"missing inspect fields for GPP diagnostics: {missing}")
+
+    return summarize_from_fields(
+        gpp=fields["gpp"],
+        gppl=fields["gppl"],
+        gppw=fields["gppw"],
+        lai=fields["lai"],
+        ts=fields["ts"],
+        rss=fields["rss"],
+        ssru=fields["ssru"],
+        mrso=fields["mrso"],
+        evap=fields["evap"],
+        land_mask=land_mask_from_lsm(lsm),
+        params=local_params,
+        mass_ratio=mass_ratio,
+        mstar=mstar,
+        au=au,
+        atmos_type=atmos_type,
+        gravity=gravity,
+        radius=radius,
+        toa_flux=toa_flux,
+        startemp=startemp,
+        avg_gpp=avg_gpp,
+        tot_gpp=tot_gpp,
+    )
+
+
+def calculate_veg(
+    mass_ratio,
+    mstar,
+    au,
+    resolution,
+    to_append,
+    atmos_type=None,
+    diagnostics=False,
+):
     r_new = radius_noack(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
     startemp, flux = stellar_mass_to_temp_flux(mstar, au)
+    atmos_type = atmos_type or ATMOS_TYPE
     
     # Cap flux as it crashes model at low AU
     # flux = min(flux, 2000)
@@ -263,6 +351,7 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     # Work on a per-call copy so concurrent grid points never clobber each
     # other's configuration (and so results are identical to the sequential run).
     local_params = dict(planet_params)
+    preset = apply_atmos_preset(local_params, atmos_type)
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
@@ -270,46 +359,47 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     local_params['startemp'] = startemp
     local_params['flux'] = flux
     
-    CMF = cmf_noack()
-    r_c = core_radius_noack(mass_ratio, CMF)
-    rhoc = core_density_noack(mass_ratio, CMF, r_c)
-    m_c = core_mass_noack(r_c, rhoc)/mass_ratio
-    r_rcb = 2 * r_c
-    t_eq = 255
-    r_b = calc_r_B(m_c, t_eq)
-    rho_rcb = calc_rho_rcb(r_b, r_rcb)
-    r_prime_b = calc_r_prime_b(r_b)
-    log_L = float(get_logL(mstar))
-    L_star = (10**log_L) * lsol
-    Lxuv0 = get_lxuv0_from_bolometric(L_star)
+    if preset["apply_hhe"]:
+        CMF = cmf_noack()
+        r_c = core_radius_noack(mass_ratio, CMF)
+        rhoc = core_density_noack(mass_ratio, CMF, r_c)
+        m_c = core_mass_noack(r_c, rhoc)/mass_ratio
+        r_rcb = 2 * r_c
+        t_eq = 255
+        r_b = calc_r_B(m_c, t_eq)
+        rho_rcb = calc_rho_rcb(r_b, r_rcb)
+        r_prime_b = calc_r_prime_b(r_b)
+        log_L = float(get_logL(mstar))
+        L_star = (10**log_L) * lsol
+        Lxuv0 = get_lxuv0_from_bolometric(L_star)
 
-    retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 0.5)
-    times, GCRs, xuvs = evolve_atmosphere(
-                M_p=mass_ratio,
-                a_AU=au,
-                t_disk_Myr=3.0,
-                t_end_Gyr=5.0,
-                init=F_INIT,
-                dusty=True,
-                eta=0.1,
-                Lnow=L_star,
-                t_sat_Myr=100,
-                decay_index=1.1,
-                M_star = mstar
-            )
+        retained_frac = np.clip(calc_f_ret_big_rcb(m_c, t_eq, r_c, r_rcb), 0, 0.5)
+        times, GCRs, xuvs = evolve_atmosphere(
+                    M_p=mass_ratio,
+                    a_AU=au,
+                    t_disk_Myr=3.0,
+                    t_end_Gyr=5.0,
+                    init=F_INIT,
+                    dusty=True,
+                    eta=0.1,
+                    Lnow=L_star,
+                    t_sat_Myr=100,
+                    decay_index=1.1,
+                    M_star = mstar
+                )
 
-    # Targeting a time of 4.5 Gyr
-    target_time = 4.5 * 10**9
-    mask = times > target_time
-    target_index = np.argmax(mask)
-    F = GCRs[target_index]
-    
-    # If time is greater than max time, that means there has been no gas retained
-    # as the simulation stops when M_atm == 0
-    if target_index <= 0:
-        F = 0
-    local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
-    local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
+        # Targeting a time of 4.5 Gyr
+        target_time = 4.5 * 10**9
+        mask = times > target_time
+        target_index = np.argmax(mask)
+        F = GCRs[target_index]
+        
+        # If time is greater than max time, that means there has been no gas retained
+        # as the simulation stops when M_atm == 0
+        if target_index <= 0:
+            F = 0
+        local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
+        local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
@@ -374,6 +464,19 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
 
     if planet == 0 or planet is None:
         # Every attempt crashed: distinct from a genuine zero-vegetation result.
+        if diagnostics:
+            from gpp_terms import base_record
+            return base_record(
+                mass_ratio=mass_ratio,
+                mstar=mstar,
+                au=au,
+                atmos_type=atmos_type,
+                crashed=True,
+                gravity=g_new,
+                radius=r_new,
+                toa_flux=flux,
+                startemp=startemp,
+            )
         return [None, None]
 
     veg = planet.inspect("veggpp", tavg=True)
@@ -384,8 +487,38 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     masked_veg_values = veg[land_mask]
     average_veg = np.mean(masked_veg_values)
     tot_veg = np.sum(masked_veg_values)
+
+    if diagnostics:
+        return extract_gpp_diagnostics(
+            planet,
+            local_params,
+            mass_ratio,
+            mstar,
+            au,
+            atmos_type,
+            average_veg,
+            tot_veg,
+            g_new,
+            r_new,
+            flux,
+            startemp,
+        )
         
     return [average_veg, tot_veg]
+
+
+def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type):
+    """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
+    return calculate_veg(
+        mass_ratio,
+        mstar,
+        au,
+        resolution,
+        workdir_suffix,
+        atmos_type=atmos_type,
+        diagnostics=True,
+    )
+
 
 def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
     """Compute a single grid point. Runs inside a worker process for isolation
