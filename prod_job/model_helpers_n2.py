@@ -166,11 +166,11 @@ planet_params = {
         'pCH4': 0.0
     }
 
-gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
+# gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
 
-for param in gas_params:
-    if param in planet_params:
-        planet_params[param] *= PRESSURE_FRACTION
+# for param in gas_params:
+#     if param in planet_params:
+#         planet_params[param] *= PRESSURE_FRACTION
 
 mass_grid = np.array([
     0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
@@ -309,8 +309,8 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     # as the simulation stops when M_atm == 0
     if target_index <= 0:
         F = 0
-    local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
-    local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
+    # local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
+    # local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,

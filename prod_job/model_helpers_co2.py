@@ -155,22 +155,16 @@ planet_params = {
         'initgrowth': INIT_GROWTH,
         'wetsoil': WET_SOIL,
         'pH2': 0.0,
-        'pHe': 5.24e-6,
-        'pN2': 0.78084,
-        'pO2': 0.20946,
-        'pCO2': 330.0e-6,
-        'pAr': 9.34e-3,
-        'pNe': 18.18e-6,
-        'pKr': 1.14e-6,
-        'pH2O': 0.01,
+        'pHe': 0.0,
+        'pN2': 0.0341,
+        'pO2': 69.3e-6,
+        'pCO2': 0.964,
+        'pAr': 18.6e-6,
+        'pNe': 4.31e-6,
+        'pKr': 0.0,
+        'pH2O': 0.0,
         'pCH4': 0.0
     }
-
-gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
-
-for param in gas_params:
-    if param in planet_params:
-        planet_params[param] *= PRESSURE_FRACTION
 
 mass_grid = np.array([
     0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
@@ -309,9 +303,7 @@ def calculate_veg(mass_ratio, mstar, au, resolution, to_append):
     # as the simulation stops when M_atm == 0
     if target_index <= 0:
         F = 0
-    local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
-    local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
-
+    
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
     # so concurrent runs fight over the same cores. "--bind-to none" lets the OS

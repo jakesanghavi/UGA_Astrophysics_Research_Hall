@@ -1,4 +1,4 @@
-from model_helpers import model_fun
+from model_helpers_n2 import model_fun
 from time import time, strftime, gmtime
 
 # --- Run configuration -------------------------------------------------------
@@ -7,13 +7,14 @@ from time import time, strftime, gmtime
 # "mass_only" : vary planet mass only; every planet is placed at 1 AU around a
 #               1 solar-mass star. Output files get a "_massonly" tag so they are
 #               easy to distinguish from a normal run.
-RUN_MODE = "mass_only"
+# RUN_MODE = "mass_only"
+RUN_MODE = "normal"
 
 # Fixed star/orbit used for the Earth reference and for "mass_only" runs.
 REFERENCE_MSTAR = 1.0   # solar masses
 REFERENCE_AU = 1.0      # AU
 
-MASS_RATIOS = [0.0266, 0.052, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
+MASS_RATIOS = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2]
 # MASS_RATIOS = [0.5, 1]
 
 
@@ -39,9 +40,9 @@ def main():
             # (B) One planet of mass m at 1 AU around a 1 Msun star.
             model_fun(m, resolution="T21",
                       points=[(REFERENCE_MSTAR, REFERENCE_AU)],
-                      file_tag="_massonly")
+                      file_tag="_massonly2")
         else:
-            model_fun(m, resolution="T21")
+            model_fun(m, resolution="T21", file_tag="_normal_n2")
 
         end_time = time()
         elapsed_seconds = end_time - start_time
