@@ -149,6 +149,21 @@ class TestPresets(unittest.TestCase):
         self.assertAlmostEqual(params["pN2"], ap.EARTHLIKE_GASES["pN2"])
         self.assertAlmostEqual(params["pCO2"], 330.0e-6)
 
+    def test_aliases_and_mars_preset(self):
+        self.assertEqual(ap.resolve_atmos_type("earth"), "n2")
+        self.assertEqual(ap.resolve_atmos_type("venus"), "co2")
+        self.assertEqual(ap.resolve_atmos_type("mars"), "mars")
+        params = {}
+        ap.apply_atmos_preset(params, "mars")
+        self.assertAlmostEqual(params["pCO2"], ap.MARSLIKE_GASES["pCO2"])
+        self.assertGreater(params["pCO2"], params["pN2"])
+
+    def test_overrides_tweak_co2_mix(self):
+        params = {}
+        ap.apply_atmos_preset(params, "venus", overrides={"pCO2": 0.90, "pN2": 0.10})
+        self.assertAlmostEqual(params["pCO2"], 0.90)
+        self.assertAlmostEqual(params["pN2"], 0.10)
+
     def test_evolved_hhe_dilutes_co2_ppmv(self):
         params = dict(ap.EARTHLIKE_GASES)
         params["pH2"] = 1.0
@@ -156,6 +171,53 @@ class TestPresets(unittest.TestCase):
         diluted = ap.co2_ppmv_from_params(params)
         earth = ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)
         self.assertLess(diluted, earth)
+
+
+class TestThermoAndPhysics(unittest.TestCase):
+    def test_pure_co2_matches_plasim_mars_kappa(self):
+        thermo = ap.thermo_from_params({"pCO2": 1.0})
+        self.assertAlmostEqual(thermo["mmw"], 44.01, places=6)
+        self.assertAlmostEqual(thermo["gascon"], ap.R_UNIV / 44.01, places=6)
+        self.assertAlmostEqual(thermo["akap"], 0.2273, places=4)
+
+    def test_earthlike_akap_is_near_diatomic(self):
+        thermo = ap.thermo_from_params(ap.EARTHLIKE_GASES)
+        self.assertAlmostEqual(thermo["akap"], 0.286, places=2)
+        self.assertAlmostEqual(thermo["gascon"], 287.0, delta=8.0)
+
+    def test_venus_and_mars_are_both_co2_but_differ(self):
+        venus = ap.thermo_from_params(ap.VENUSLIKE_GASES)
+        mars = ap.thermo_from_params(ap.MARSLIKE_GASES)
+        self.assertAlmostEqual(venus["akap"], 0.2273, places=2)
+        self.assertAlmostEqual(mars["akap"], 0.2273, places=2)
+        self.assertNotAlmostEqual(venus["mmw"], mars["mmw"], places=2)
+
+    def test_earth_physics_does_not_write_gascon_or_akap(self):
+        params = dict(ap.VENUSLIKE_GASES)
+        kwargs = ap.apply_physics_mode(params, "earth")
+        self.assertFalse(kwargs["mars"])
+        self.assertNotIn("gascon", params)
+        self.assertNotIn("AKAP@planet_namelist", params.get("otherargs", {}))
+
+    def test_other_physics_writes_gascon_and_akap(self):
+        params = dict(ap.VENUSLIKE_GASES)
+        kwargs = ap.apply_physics_mode(params, "other")
+        thermo = ap.thermo_from_params(ap.VENUSLIKE_GASES)
+        self.assertFalse(kwargs["mars"])
+        self.assertAlmostEqual(params["gascon"], thermo["gascon"])
+        self.assertEqual(params["otherargs"]["AKAP@planet_namelist"], str(thermo["akap"]))
+
+    def test_mars_physics_sets_model_flag(self):
+        params = dict(ap.MARSLIKE_GASES)
+        kwargs = ap.apply_physics_mode(params, "mars")
+        self.assertTrue(kwargs["mars"])
+        self.assertNotIn("gascon", params)
+
+    def test_default_file_tags_match_historical_names(self):
+        self.assertEqual(ap.regime_file_tag("normal", "n2", "earth"), "_normal_n2")
+        self.assertEqual(ap.regime_file_tag("mass_only", "earth", "earth"), "_massonly2")
+        self.assertEqual(ap.regime_file_tag("mass_only", "venus", "other"), "_massonly_co2_other")
+        self.assertEqual(ap.regime_file_tag("mass_only", "mars", "other"), "_massonly_mars_other")
 
 
 class TestDiagnosticCli(unittest.TestCase):
@@ -166,6 +228,10 @@ class TestDiagnosticCli(unittest.TestCase):
         self.assertEqual(len(tasks), 9)
         self.assertEqual(args.years, 1)
         self.assertEqual({t[0] for t in tasks}, {"evolved", "n2", "co2"})
+
+    def test_aliases_and_mars_are_accepted(self):
+        args = runner.parse_args(["--dry-run", "--atmos", "earth,venus,mars", "--masses", "1"])
+        self.assertEqual(args.atmos, ["n2", "co2", "mars"])
 
     def test_dry_run_does_not_import_exoplasim(self):
         args = runner.parse_args(["--dry-run", "--atmos", "n2", "--masses", "1"])

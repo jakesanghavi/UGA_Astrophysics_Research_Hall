@@ -2,12 +2,13 @@
 """Small-grid SIMBA GPP-term diagnostic.
 
 Not a production sweep. Default is 3 atmosphere knobs × 3 planet masses at
-1 Msun / 1 AU, one model year. Flip the knobs rather than swapping
-`model_helpers_n2.py` / `model_helpers_co2.py`:
+1 Msun / 1 AU, one model year. Composition is selected in `run_model.py`
+(`ATMOS_TYPE` / `ATMOS_PARAMS`) rather than swapping helper files:
 
     evolved  Earth-like mix + H/He from evolve_atmosphere
-    n2       Earth-like N2/O2, no H/He overlay
-    co2      Venus-like CO2, no H/He overlay
+    n2       Earth-like N2/O2, no H/He overlay (alias: earth)
+    co2      Venus-like CO2, no H/He overlay (alias: venus)
+    mars     Mars-like CO2 mix, no H/He overlay
 
 Usage (from prod_job/, with the project venv):
 
@@ -28,7 +29,7 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from atmos_presets import ATMOS_TYPES
+from atmos_presets import ATMOS_TYPES, resolve_atmos_type
 from veg_utils import calc_hz_percentiles
 
 DEFAULT_MASSES = [0.25, 1.0, 2.0]
@@ -44,12 +45,19 @@ def parse_float_list(text):
 
 def parse_atmos_list(text):
     names = [part.strip() for part in text.split(",") if part.strip()]
-    unknown = [name for name in names if name not in ATMOS_TYPES]
+    resolved = []
+    unknown = []
+    for name in names:
+        try:
+            resolved.append(resolve_atmos_type(name))
+        except ValueError:
+            unknown.append(name)
     if unknown:
         raise argparse.ArgumentTypeError(
-            f"unknown atmos type(s) {unknown}; expected one of {list(ATMOS_TYPES)}"
+            f"unknown atmos type(s) {unknown}; expected evolved/n2/co2/mars "
+            f"(aliases: earth, venus)"
         )
-    return names
+    return resolved
 
 
 def build_tasks(args):
@@ -132,7 +140,7 @@ def parse_args(argv=None):
         "--atmos",
         type=parse_atmos_list,
         default=list(ATMOS_TYPES),
-        help="comma-separated knobs: evolved,n2,co2 (default: all three)",
+        help="comma-separated knobs: evolved,n2,co2,mars (default: evolved,n2,co2)",
     )
     parser.add_argument(
         "--masses",

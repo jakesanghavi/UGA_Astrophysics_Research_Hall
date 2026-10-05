@@ -4,7 +4,14 @@ from matplotlib import pyplot as plt
 from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b, calc_hz_percentiles
 from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
 from atm_mass_frac import evolve_atmosphere
-from atmos_presets import apply_atmos_preset
+from atmos_presets import (
+    GAS_KEYS,
+    apply_atmos_preset,
+    apply_physics_mode,
+    resolve_atmos_type,
+    resolve_physics_mode,
+    thermo_from_params,
+)
 import sys
 import json
 import shutil
@@ -65,12 +72,18 @@ MSTARS = [0.8, 1.0, 1.2]
 
 # Gas settings
 F_INIT = 0.01
-# Atmosphere composition knob. Matches the three model_helpers* variants:
-#   evolved — Earth-like mix + H/He left by evolve_atmosphere (model_helpers.py)
-#   n2      — Earth-like N2/O2, no H/He overlay (model_helpers_n2.py)
-#   co2     — Venus-like CO2, no H/He overlay (model_helpers_co2.py)
-# Production sweeps keep the evolved default. The GPP diagnostic flips this.
+# Composition (partial-pressure mix). Routed from run_model.py; the GPP
+# diagnostic also flips this per grid point.
+#   evolved — Earth-like mix + H/He left by evolve_atmosphere
+#   n2      — Earth-like N2/O2, no H/He overlay  (alias: earth)
+#   co2     — Venus-like CO2, no H/He overlay    (alias: venus)
+#   mars    — Mars-like CO2 mix, no H/He overlay
 ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "evolved")
+# How PlaSim R and κ are set. Routed from run_model.py.
+#   earth — ExoPlaSim auto gascon from partial pressures; akap stays 0.286
+#   mars  — compile p_mars.f90 (Mars-only; also changes calendar/ozone/soil)
+#   other — write gascon = 8314.46/mmw and akap = R/Cp from the mix
+PHYSICS_MODE = os.environ.get("EXOPLASIM_PHYSICS", "earth")
 
 os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
 os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
@@ -173,11 +186,8 @@ planet_params = {
         'pCH4': 0.0
     }
 
-gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
-
-for param in gas_params:
-    if param in planet_params:
-        planet_params[param] *= PRESSURE_FRACTION
+# Default planet_params is Earth-like; calculate_veg overwrites gases from the
+# selected atmos_type (and optional atmos_params) before applying PRESSURE_FRACTION.
 
 mass_grid = np.array([
     0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
@@ -339,20 +349,27 @@ def calculate_veg(
     resolution,
     to_append,
     atmos_type=None,
+    physics_mode=None,
+    atmos_params=None,
     diagnostics=False,
 ):
     r_new = radius_noack(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
     startemp, flux = stellar_mass_to_temp_flux(mstar, au)
-    atmos_type = atmos_type or ATMOS_TYPE
-    
+    atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
+
     # Cap flux as it crashes model at low AU
     # flux = min(flux, 2000)
 
     # Work on a per-call copy so concurrent grid points never clobber each
     # other's configuration (and so results are identical to the sequential run).
     local_params = dict(planet_params)
-    preset = apply_atmos_preset(local_params, atmos_type)
+    preset = apply_atmos_preset(local_params, atmos_type, overrides=atmos_params)
+    if PRESSURE_FRACTION != 1:
+        for gas_key in GAS_KEYS:
+            if gas_key in local_params:
+                local_params[gas_key] *= PRESSURE_FRACTION
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
@@ -402,6 +419,15 @@ def calculate_veg(
         local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
         local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
+    model_kwargs = apply_physics_mode(local_params, physics_mode)
+    thermo = thermo_from_params(local_params)
+    print(
+        f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
+        f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
+        f"akap={thermo['akap']:.4f} (earth mode leaves akap=0.286; "
+        f"other writes this akap; mars uses p_mars.f90)"
+    )
+
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
     # so concurrent runs fight over the same cores. "--bind-to none" lets the OS
@@ -438,7 +464,8 @@ def calculate_veg(
             layers=NLAYERS,
             precision=PRECISION,
             outputtype=OUTPUT_TYPE,
-            mpi_opts=mpi_opts
+            mpi_opts=mpi_opts,
+            mars=model_kwargs["mars"],
         )
 
         planet.debug = True
@@ -508,7 +535,8 @@ def calculate_veg(
     return [average_veg, tot_veg]
 
 
-def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type):
+def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
+                    physics_mode=None, atmos_params=None):
     """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
     return calculate_veg(
         mass_ratio,
@@ -517,14 +545,20 @@ def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_typ
         resolution,
         workdir_suffix,
         atmos_type=atmos_type,
+        physics_mode=physics_mode,
+        atmos_params=atmos_params,
         diagnostics=True,
     )
 
 
-def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
+def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
+                atmos_type, physics_mode, atmos_params):
     """Compute a single grid point. Runs inside a worker process for isolation
     (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
-    veg_amt = calculate_veg(mass_ratio, mstar, au, resolution, workdir_suffix)
+    veg_amt = calculate_veg(
+        mass_ratio, mstar, au, resolution, workdir_suffix,
+        atmos_type=atmos_type, physics_mode=physics_mode, atmos_params=atmos_params,
+    )
     flux = stellar_mass_to_temp_flux(mstar, au)
     veg_amt.append(flux[0])
     veg_amt.append(flux[1])
@@ -533,17 +567,24 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
     return [float(v) if v is not None else None for v in veg_amt]
 
 
-def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None):
+def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
+              atmos_type=None, physics_mode=None, atmos_params=None):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
-    points      : explicit list of (mstar, au) tuples to evaluate. If None
-                  (default), sweep every star in MSTARS across its habitable-zone
-                  percentiles (the original behavior).
-    file_tag    : inserted into the default output filename (e.g. "_massonly")
-                  so alternate configurations are easy to tell apart.
-    output_file : full override of the output filename (takes precedence over
-                  file_tag), used e.g. for the Earth reference baseline.
+    points        : explicit list of (mstar, au) tuples to evaluate. If None
+                    (default), sweep every star in MSTARS across its habitable-zone
+                    percentiles (the original behavior).
+    file_tag      : inserted into the default output filename (e.g. "_massonly")
+                    so alternate configurations are easy to tell apart.
+    output_file   : full override of the output filename (takes precedence over
+                    file_tag), used e.g. for the Earth reference baseline.
+    atmos_type    : composition preset (evolved / n2 / co2 / mars; earth→n2, venus→co2).
+    physics_mode  : earth (default) / mars / other — how gascon and akap are set.
+    atmos_params  : optional dict of partial-pressure overrides on top of the preset.
     """
+    atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
+
     # Change name based on resolution
     res_suffix = "" if resolution == 'T21' else resolution
     if output_file is None:
@@ -571,7 +612,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             continue
         # Unique workdir per task so concurrent runs never share a directory.
         safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
-        workdir_suffix = f"{res_suffix}_{safe}"
+        workdir_suffix = f"{res_suffix}_{atmos_type}_{physics_mode}_{safe}"
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:
@@ -587,7 +628,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     # compilation race. It is also the whole job when WORKERS == 1.
     ms, au_key, mstar, au, workdir_suffix = tasks[0]
     try:
-        _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
+        _save(ms, au_key, _grid_point(
+            mass_ratio, mstar, au, resolution, workdir_suffix,
+            atmos_type, physics_mode, atmos_params,
+        ))
     except Exception as e:
         print(f"Error! ({ms}, {au_key}): {e}")
 
@@ -598,7 +642,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     if WORKERS <= 1:
         for ms, au_key, mstar, au, workdir_suffix in remaining:
             try:
-                _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
+                _save(ms, au_key, _grid_point(
+                    mass_ratio, mstar, au, resolution, workdir_suffix,
+                    atmos_type, physics_mode, atmos_params,
+                ))
             except Exception as e:
                 print(f"Error! ({ms}, {au_key}): {e}")
         return
@@ -606,7 +653,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     # Independent grid points run concurrently in isolated worker processes.
     with ProcessPoolExecutor(max_workers=WORKERS) as pool:
         future_map = {
-            pool.submit(_grid_point, mass_ratio, mstar, au, resolution, workdir_suffix): (ms, au_key)
+            pool.submit(
+                _grid_point, mass_ratio, mstar, au, resolution, workdir_suffix,
+                atmos_type, physics_mode, atmos_params,
+            ): (ms, au_key)
             for ms, au_key, mstar, au, workdir_suffix in remaining
         }
         for fut in as_completed(future_map):
