@@ -108,13 +108,15 @@ The patch splits the two:
 - Photosynthesis uses `zco2p = min(air CO2, 1000 ppm)` unless `CO2VEG` is
   set explicitly in the namelist (`CO2VEG >= 0` overrides the clamp).
 
-1000 ppm is a saturation-style cap, not a hard β ceiling. At 1000 ppm,
-β ≈ 1.31. Earth at 330 ppm is unchanged (below the clamp). Water-limited
-GPP uses `zco2p` as well.
+1000 ppm is a plant-CO2 clamp for the water-limited term (`zgppw ∝ zco2p`).
+Harvey β is then capped at 1.0 (the 360 ppm reference). Earth at 330 ppm
+stays β ≈ 0.97. High-CO2 mixes cannot get a fertilization bonus above
+Earth; low CO2 can still drop β below 1 and to 0 near 13 ppm.
 
 Namelist (written after `configure`): `CO2VEG`, `CO2VEG_MAX`, `T_HOT`,
 `T_KILL`. Fortran defaults: `CO2VEG = -1` (use the clamp),
-`CO2VEG_MAX = 1000`, `T_HOT = 35`, `T_KILL = 45`.
+`CO2VEG_MAX = 1000`, `T_HOT = 35`, `T_KILL = 45`. β cap 1.0 is in
+`vegstep`, not the namelist.
 
 ### Temperature
 

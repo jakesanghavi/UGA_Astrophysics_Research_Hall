@@ -348,6 +348,7 @@ if (zco2p .lt. 1.0e-8) then
 else
   zbeta  = max(0.,1.+co2_sens*log((zco2p-co2_comp)/(co2_ref-co2_comp)))
 endif
+zbeta = min(1.0, zbeta)
   
 ! Following plasim arrays are used but not modified
 ! -------------------------------------------------

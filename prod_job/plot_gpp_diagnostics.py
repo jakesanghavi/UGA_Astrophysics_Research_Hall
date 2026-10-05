@@ -267,11 +267,76 @@ def plot_attribution(records, reference, axis, outdir):
     return path
 
 
+def plot_gpp_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
+    """Grouped bars of land-mean GPP by atmosphere at selected planet masses.
+
+    Heights are GPP / Earthlike GPP at 1 M⊕ when that point exists.
+    """
+    present = sorted({
+        rec["mass_ratio"]
+        for rows in by_atmos.values()
+        for rec in rows
+        if (not rec.get("crashed")) and rec.get("gpp") is not None
+    })
+    masses = [m for m in masses if m in present] or present
+    if not masses:
+        return None
+
+    def gpp_at(atmos, mass):
+        for rec in by_atmos.get(atmos, []):
+            if rec.get("crashed") or rec.get("gpp") is None:
+                continue
+            if rec.get("mass_ratio") == mass:
+                return rec["gpp"]
+        return None
+
+    earth_1 = gpp_at("n2", 1.0)
+    atmos_names = atmos_order(by_atmos)
+    x = np.arange(len(masses), dtype=float)
+    width = 0.8 / max(len(atmos_names), 1)
+    fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    for i, atmos in enumerate(atmos_names):
+        ys = []
+        for mass in masses:
+            value = gpp_at(atmos, mass)
+            if value is None:
+                ys.append(float("nan"))
+            elif earth_1:
+                ys.append(value / earth_1)
+            else:
+                ys.append(value)
+        offset = (i - 0.5 * (len(atmos_names) - 1)) * width
+        bars = ax.bar(x + offset, ys, width, label=atmos_label(atmos))
+        ax.bar_label(bars, fmt="%.2f" if earth_1 else "%.1e", padding=2, fontsize=8)
+    if earth_1:
+        ax.axhline(1.0, color="0.4", lw=0.8, ls="--")
+        ax.set_ylabel("GPP / Earthlike 1 $M_\\oplus$")
+    else:
+        ax.set_ylabel("Land-mean GPP")
+        ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{m:g}" for m in masses])
+    ax.set_xlabel(r"Planet mass [$M_\oplus$]")
+    ax.set_title("GPP by atmosphere")
+    ax.legend()
+    ax.margins(y=0.14)
+    fig.tight_layout()
+    path = os.path.join(outdir, "gpp_regime_bars.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", default="gpp_diag.json")
     parser.add_argument("--outdir", default="gpp_diag_plots")
     parser.add_argument("--axis", choices=("mass", "au", "mstar"), default=None)
+    parser.add_argument(
+        "--only-bars",
+        action="store_true",
+        help="write only gpp_regime_bars.png",
+    )
     return parser.parse_args(argv)
 
 
@@ -284,12 +349,16 @@ def main(argv=None):
     axis = infer_axis(records, bundle.get("axis") or args.axis)
     os.makedirs(args.outdir, exist_ok=True)
     by_atmos = grouped(records)
-    written = [
-        plot_factors(by_atmos, axis, args.outdir),
-        plot_overlay(by_atmos, axis, args.outdir),
-        plot_gpp_ratio(by_atmos, axis, args.outdir),
-        plot_attribution(records, pick_reference(records), axis, args.outdir),
-    ]
+    if args.only_bars:
+        written = [plot_gpp_regime_bars(by_atmos, args.outdir)]
+    else:
+        written = [
+            plot_factors(by_atmos, axis, args.outdir),
+            plot_overlay(by_atmos, axis, args.outdir),
+            plot_gpp_ratio(by_atmos, axis, args.outdir),
+            plot_gpp_regime_bars(by_atmos, args.outdir),
+            plot_attribution(records, pick_reference(records), axis, args.outdir),
+        ]
     for path in written:
         if path:
             print(f"Wrote {path}")

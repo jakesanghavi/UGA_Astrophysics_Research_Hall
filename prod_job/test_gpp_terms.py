@@ -47,10 +47,12 @@ class TestBeta(unittest.TestCase):
         plant = gt.plant_co2_ppmv(ppmv)
         self.assertAlmostEqual(plant, gt.CO2VEG_MAX)
         beta = gt.beta_co2(ppmv)
-        expected = 1.0 + 0.3 * math.log(gt.CO2VEG_MAX / 360.0)
-        self.assertAlmostEqual(beta, expected, places=12)
-        self.assertLess(beta, 1.4)
-        self.assertGreater(beta, 1.2)
+        self.assertEqual(beta, 1.0)
+
+    def test_beta_cap_is_one_above_360_ppm(self):
+        self.assertEqual(gt.beta_co2(360.0), 1.0)
+        self.assertEqual(gt.beta_co2(1000.0), 1.0)
+        self.assertEqual(gt.beta_co2(1.0e6), 1.0)
 
     def test_earth_co2_is_below_the_clamp(self):
         ppmv = ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)
@@ -136,7 +138,7 @@ class TestSummarize(unittest.TestCase):
         rec = gt.summarize_from_fields(**fields)
         self.assertGreater(rec["co2_ppmv"], 9.0e5)
         self.assertAlmostEqual(rec["co2veg_ppmv"], gt.CO2VEG_MAX)
-        self.assertLess(rec["beta"], 1.4)
+        self.assertEqual(rec["beta"], 1.0)
 
 
 class TestAttribution(unittest.TestCase):
@@ -375,6 +377,7 @@ class TestPlotter(unittest.TestCase):
                 "gpp_terms_by_atmos.png",
                 "gpp_terms_overlay.png",
                 "gpp_ratio_vs_earth.png",
+                "gpp_regime_bars.png",
                 "gpp_dln_attribution.png",
             ):
                 path = os.path.join(outdir, name)

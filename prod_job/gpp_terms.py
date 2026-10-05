@@ -3,7 +3,7 @@
 Matches patched `plasim_patches/simba.f90` vegstep:
 
     zco2p = min(air CO2 ppmv, 1000)     # plant CO2; radiation still uses air CO2
-    zbeta = max(0, 1 + 0.3 * ln(zco2p / 360))   # 0 if zco2p ~ 0
+    zbeta = min(1, max(0, 1 + 0.3 * ln(zco2p / 360)))   # 0 if zco2p ~ 0; cap 1.0
     zft   = clip((T_sfc_C) / 5, 0, 1)           # thaw 0–5 C
             * clip((45 - T_sfc_C) / 10, 0, 1)   # if T > 35 C; 0 at 45 C
     zveg  = 1 - exp(-0.5 * LAI)
@@ -29,6 +29,7 @@ T_CRIT_C = 5.0          # deg C, thaw ramp
 T_HOT_C = 35.0          # deg C, start of high-T decline
 T_KILL_C = 45.0         # deg C, GPP = 0
 CO2VEG_MAX = 1000.0     # ppmv plant-CO2 clamp
+BETA_MAX = 1.0          # Harvey β cap (Earth reference is 1 at 360 ppm)
 TMELT = 273.15          # K
 K_VEG = 0.5             # Beer's-law extinction
 CO2_ZERO = 1.0e-8       # Fortran branch: no CO2 => zbeta = 0
@@ -41,8 +42,8 @@ def plant_co2_ppmv(co2_ppmv, co2veg_max=CO2VEG_MAX):
     return min(max(float(co2_ppmv), 0.0), float(co2veg_max))
 
 
-def beta_co2(co2_ppmv, co2veg_max=CO2VEG_MAX):
-    """Harvey β from plant CO2 (clamped). Fortran form, not the docs."""
+def beta_co2(co2_ppmv, co2veg_max=CO2VEG_MAX, beta_max=BETA_MAX):
+    """Harvey β from plant CO2. Floor 0, cap beta_max (1.0)."""
     co2 = plant_co2_ppmv(co2_ppmv, co2veg_max=co2veg_max)
     if co2 < CO2_ZERO:
         return 0.0
@@ -52,7 +53,10 @@ def beta_co2(co2_ppmv, co2veg_max=CO2VEG_MAX):
     argument = (co2 - CO2_COMP) / denom
     if argument <= 0.0:
         return 0.0
-    return float(max(0.0, 1.0 + CO2_SENS * math.log(argument)))
+    beta = max(0.0, 1.0 + CO2_SENS * math.log(argument))
+    if beta_max is not None:
+        beta = min(float(beta_max), beta)
+    return float(beta)
 
 
 def f_temperature(ts_k, t_hot=T_HOT_C, t_kill=T_KILL_C):
