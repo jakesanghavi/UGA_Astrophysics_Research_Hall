@@ -175,9 +175,10 @@ def plot_overlay(by_atmos, axis, outdir):
             ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=len(labels))
-    fig.suptitle("GPP terms overlaid by atmosphere")
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+        fig.legend(handles, labels, loc="upper center", ncol=len(labels),
+                   bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.suptitle("GPP terms overlaid by atmosphere", y=1.06)
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     path = os.path.join(outdir, "gpp_terms_overlay.png")
     fig.savefig(path)
     plt.close(fig)
