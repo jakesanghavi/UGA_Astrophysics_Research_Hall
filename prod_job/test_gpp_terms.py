@@ -385,7 +385,8 @@ class TestSimbaPatch(unittest.TestCase):
     def test_patch_declares_namelist_vars(self):
         path = os.path.join(os.path.dirname(__file__), "plasim_patches", "simba.f90")
         self.assertTrue(os.path.isfile(path), path)
-        text = open(path).read()
+        with open(path) as handle:
+            text = handle.read()
         for token in ("co2veg", "co2veg_max", "t_hot", "t_kill", "zco2p"):
             self.assertIn(token, text)
 
