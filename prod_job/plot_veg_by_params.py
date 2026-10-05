@@ -16,15 +16,19 @@ VALUE_INDEX = 1
 # "_massonly") -- a single row. False: a normal full M*/AU sweep (grid of rows).
 MASS_ONLY = True
 
+### Extension if _normal if mass_only is False
+# EXTENSION = "_normal"
+EXTENSION = ""
+
 # Planet masses (Earth masses). File name suffixes are derived from these to
 # match run_model.py's naming: str(mass).replace('.', '').
 MASS_RATIOS = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 4]
 
 # Stellar masses shown as subplot rows; only those present in the data are used.
-STAR_ROWS = ["0.7", "0.8", "0.9", "1.0", "1.1"]
+STAR_ROWS = ["0.7", "0.8", "0.9", "1.0", "1.1", "1.2"]
 
 # Earth reference (1 Mearth, 1 AU, 1 Msun) used to normalize GPP so Earth = 1.
-EARTH_REFERENCE_FILE = "16cpus_test_10_massonly.json"
+EARTH_REFERENCE_FILE = f"16cpus_test_10_massonly.json"
 
 # Use the paper style that ships next to this script.
 _STYLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper.mplstyle")
@@ -39,7 +43,7 @@ def mass_suffix(mass):
 def data_tag():
     """Filename tag (resolution + mass_only), matching run_model.py output."""
     res_tag = RESOLUTION if RESOLUTION == "T42" else ""
-    return res_tag + ("_massonly" if MASS_ONLY else "")
+    return res_tag + ("_massonly" if MASS_ONLY else "_normal") + EXTENSION
 
 
 def load_data():
@@ -183,6 +187,7 @@ def plot_grid(data, star_rows, norm, yscale="linear", sharey=False,
 def main():
     data = load_data()
     norm = load_earth_baseline()
+    NORMAL = " normal"
     if MASS_ONLY:
         # A single row of ratios clustered near 1 -- a log scale is unreadable
         # here (sub-decade range, sparse ticks), so use a linear scale from 0
@@ -191,11 +196,11 @@ def main():
                   title_suffix="mass_only", annotate=True)
     else:
         plot_grid(data, STAR_ROWS, norm, yscale="linear", sharey=True,
-                  title_suffix="Shared linear scale")
+                  title_suffix=f"Shared linear scale{NORMAL}{EXTENSION}")
         plot_grid(data, STAR_ROWS, norm, yscale="log", sharey=True,
-                  title_suffix="log10 scale (shared)")
+                  title_suffix=f"log10 scale (shared){NORMAL}{EXTENSION}")
         plot_grid(data, STAR_ROWS, norm, yscale="linear", sharey=False,
-                  title_suffix="Independent linear scales")
+                  title_suffix=f"Independent linear scales{NORMAL}{EXTENSION}")
 
 
 if __name__ == "__main__":
