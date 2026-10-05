@@ -135,10 +135,15 @@ those points are retried. `0.0` is a real zero-vegetation result.
 
 ## Plotting a production sweep
 
-`plot_veg_by_params.py` reads the per-mass JSON files. Match `MASS_ONLY` and
-`EXTENSION` to the files you just wrote. `n2` + earth uses the historical
-names (`_massonly2` / `_normal_n2`); other regimes need `EXTENSION` set to
-the rest of the tag (e.g. `"_co2_other"` with `MASS_ONLY = True`).
+`plot_veg_by_params.py` reads the per-mass JSON files. The filename tag is
+`_massonly` or `_normal` plus `EXTENSION`. Set those to match the table above:
+
+| Files | `MASS_ONLY` | `EXTENSION` |
+|---|---|---|
+| `_massonly2` (`n2` + earth) | `True` | `"2"` |
+| `_normal_n2` (`n2` + earth) | `False` | `"_n2"` |
+| `_massonly_co2_other` | `True` | `"_co2_other"` |
+| `_normal_mars_other` | `False` | `"_mars_other"` |
 
 ```bash
 python plot_veg_by_params.py
