@@ -233,6 +233,23 @@ class TestDiagnosticCli(unittest.TestCase):
         args = runner.parse_args(["--dry-run", "--atmos", "earth,venus,mars", "--masses", "1"])
         self.assertEqual(args.atmos, ["n2", "co2", "mars"])
 
+    def test_physics_mapping_matches_demo(self):
+        args = runner.parse_args([
+            "--dry-run", "--atmos", "n2,co2,mars", "--masses", "1,1.5",
+            "--physics", "n2=earth,co2=other,mars=other",
+        ])
+        tasks = runner.build_tasks(args)
+        self.assertEqual(len(tasks), 6)
+        by_atmos = {t[0]: t[4] for t in tasks}
+        self.assertEqual(by_atmos["n2"], "earth")
+        self.assertEqual(by_atmos["co2"], "other")
+        self.assertEqual(by_atmos["mars"], "other")
+
+    def test_default_physics_is_earth(self):
+        args = runner.parse_args(["--dry-run", "--atmos", "co2", "--masses", "1"])
+        tasks = runner.build_tasks(args)
+        self.assertEqual(tasks[0][4], "earth")
+
     def test_dry_run_does_not_import_exoplasim(self):
         args = runner.parse_args(["--dry-run", "--atmos", "n2", "--masses", "1"])
         tasks = runner.build_tasks(args)

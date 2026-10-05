@@ -117,7 +117,7 @@ def xy(rows, axis, field):
 
 
 def plot_factors(by_atmos, axis, outdir):
-    atmos_names = [name for name in ("n2", "evolved", "co2") if name in by_atmos]
+    atmos_names = [name for name in ("n2", "co2", "mars", "evolved") if name in by_atmos]
     atmos_names += [name for name in by_atmos if name not in atmos_names]
     nrows = len(FACTOR_PANELS)
     ncols = max(len(atmos_names), 1)
@@ -197,7 +197,9 @@ def plot_attribution(records, reference, axis, outdir):
         bottoms_pos += pos
         bottoms_neg += neg
     labels = [
-        "{a} M={m:g}".format(a=rec["atmos"], m=rec[axis_key(axis)])
+        "{a}/{p} M={m:g}".format(
+            a=rec["atmos"], p=rec.get("physics") or "earth", m=rec[axis_key(axis)]
+        )
         for rec in live
     ]
     ax.set_xticks(x)

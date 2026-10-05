@@ -177,6 +177,7 @@ def base_record(
     mstar,
     au,
     atmos_type,
+    physics_mode="earth",
     crashed=False,
     gravity=None,
     radius=None,
@@ -188,6 +189,7 @@ def base_record(
     """JSON-safe skeleton for one diagnostic grid point (including crashes)."""
     return {
         "atmos": atmos_type,
+        "physics": physics_mode,
         "mass_ratio": _finite(mass_ratio),
         "mstar": _finite(mstar),
         "au": _finite(au),
@@ -203,6 +205,9 @@ def base_record(
         "pH2_bar": None,
         "pHe_bar": None,
         "co2_ppmv": None,
+        "mmw": None,
+        "gascon": None,
+        "akap_mix": None,
         "epsilon": RLUE,
         "beta": None,
         "gpp": None,
@@ -235,6 +240,7 @@ def summarize_from_fields(
     mstar,
     au,
     atmos_type,
+    physics_mode="earth",
     ssru=None,
     mrso=None,
     evap=None,
@@ -252,6 +258,7 @@ def summarize_from_fields(
         mstar=mstar,
         au=au,
         atmos_type=atmos_type,
+        physics_mode=physics_mode,
         crashed=crashed,
         gravity=gravity,
         radius=radius,
@@ -263,6 +270,8 @@ def summarize_from_fields(
     if crashed:
         return record
 
+    from atmos_presets import thermo_from_params
+
     p_tot = total_pressure_bar(params)
     co2_ppmv = co2_ppmv_from_params(params)
     beta = beta_co2(co2_ppmv)
@@ -272,6 +281,13 @@ def summarize_from_fields(
     record["pHe_bar"] = _finite(params.get("pHe"))
     record["co2_ppmv"] = _finite(co2_ppmv)
     record["beta"] = _finite(beta)
+    try:
+        thermo = thermo_from_params(params)
+        record["mmw"] = _finite(thermo["mmw"])
+        record["gascon"] = _finite(thermo["gascon"])
+        record["akap_mix"] = _finite(thermo["akap"])
+    except ValueError:
+        pass
 
     aligned = _align_fields({
         "gpp": gpp, "gppl": gppl, "gppw": gppw, "lai": lai, "ts": ts,

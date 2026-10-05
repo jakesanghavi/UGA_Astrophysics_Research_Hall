@@ -294,6 +294,7 @@ def extract_gpp_diagnostics(
     radius,
     toa_flux,
     startemp,
+    physics_mode="earth",
 ):
     """Land-mean SIMBA GPP factors from a finished planet's postprocessed output."""
     from gpp_terms import land_mask_from_lsm, summarize_from_fields
@@ -339,6 +340,7 @@ def extract_gpp_diagnostics(
         startemp=startemp,
         avg_gpp=avg_gpp,
         tot_gpp=tot_gpp,
+        physics_mode=physics_mode,
     )
 
 
@@ -499,6 +501,7 @@ def calculate_veg(
                 mstar=mstar,
                 au=au,
                 atmos_type=atmos_type,
+                physics_mode=physics_mode,
                 crashed=True,
                 gravity=g_new,
                 radius=r_new,
@@ -530,6 +533,7 @@ def calculate_veg(
             r_new,
             flux,
             startemp,
+            physics_mode=physics_mode,
         )
         
     return [average_veg, tot_veg]
