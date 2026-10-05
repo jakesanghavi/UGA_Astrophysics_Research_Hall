@@ -374,6 +374,7 @@ class TestPlotter(unittest.TestCase):
             for name in (
                 "gpp_terms_by_atmos.png",
                 "gpp_terms_overlay.png",
+                "gpp_ratio_vs_earth.png",
                 "gpp_dln_attribution.png",
             ):
                 path = os.path.join(outdir, name)

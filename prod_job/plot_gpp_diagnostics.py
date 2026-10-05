@@ -82,6 +82,17 @@ def grouped(records):
     return by_atmos
 
 
+def atmos_order(by_atmos):
+    preferred = ("n2", "co2", "mars", "evolved", "venus_surface", "mars_surface")
+    names = [name for name in preferred if name in by_atmos]
+    names += [name for name in by_atmos if name not in names]
+    return names
+
+
+def atmos_label(atmos):
+    return PRESETS.get(atmos, {}).get("label", atmos)
+
+
 def pick_reference(records):
     """Prefer 1 Me / 1 Msun / 1 AU / n2; else 1 Me on n2; else first live n2; else first live."""
     def live(rec):
@@ -117,8 +128,7 @@ def xy(rows, axis, field):
 
 
 def plot_factors(by_atmos, axis, outdir):
-    atmos_names = [name for name in ("n2", "co2", "mars", "evolved") if name in by_atmos]
-    atmos_names += [name for name in by_atmos if name not in atmos_names]
+    atmos_names = atmos_order(by_atmos)
     nrows = len(FACTOR_PANELS)
     ncols = max(len(atmos_names), 1)
     fig, axes = plt.subplots(
@@ -128,7 +138,7 @@ def plot_factors(by_atmos, axis, outdir):
     )
     for col, atmos in enumerate(atmos_names):
         rows = by_atmos[atmos]
-        label = PRESETS.get(atmos, {}).get("label", atmos)
+        label = atmos_label(atmos)
         for row, (field, title) in enumerate(FACTOR_PANELS):
             ax = axes[row, col]
             xs, ys = xy(rows, axis, field)
@@ -154,11 +164,11 @@ def plot_overlay(by_atmos, axis, outdir):
     )
     axes = axes.ravel()
     for ax, (field, title) in zip(axes, FACTOR_PANELS):
-        for atmos, rows in by_atmos.items():
-            xs, ys = xy(rows, axis, field)
+        for atmos in atmos_order(by_atmos):
+            xs, ys = xy(by_atmos[atmos], axis, field)
             if not xs.size:
                 continue
-            ax.plot(xs, ys, marker="o", label=atmos)
+            ax.plot(xs, ys, marker="o", label=atmos_label(atmos))
         ax.set_title(title)
         ax.set_xlabel(axis_label(axis))
         if field in ("gpp", "gppl", "gppw"):
@@ -166,9 +176,46 @@ def plot_overlay(by_atmos, axis, outdir):
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=len(labels))
-    fig.suptitle("GPP terms overlaid by atmosphere knob")
+    fig.suptitle("GPP terms overlaid by atmosphere")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     path = os.path.join(outdir, "gpp_terms_overlay.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_gpp_ratio(by_atmos, axis, outdir):
+    """GPP / n2 GPP at the same mass (or AU / M*). n2 is a flat 1."""
+    if "n2" not in by_atmos:
+        return None
+    key = axis_key(axis)
+    n2_map = {}
+    for rec in by_atmos["n2"]:
+        if rec.get("crashed") or rec.get("gpp") in (None, 0.0):
+            continue
+        n2_map[rec[key]] = rec["gpp"]
+    if not n2_map:
+        return None
+    fig, ax = plt.subplots(figsize=(6.5, 3.6))
+    for atmos in atmos_order(by_atmos):
+        xs, ys = [], []
+        for rec in by_atmos[atmos]:
+            if rec.get("crashed") or rec.get("gpp") is None:
+                continue
+            ref = n2_map.get(rec[key])
+            if not ref:
+                continue
+            xs.append(rec[key])
+            ys.append(rec["gpp"] / ref)
+        if xs:
+            ax.plot(xs, ys, marker="o", label=atmos_label(atmos))
+    ax.axhline(1.0, color="0.4", lw=0.8, ls="--")
+    ax.set_xlabel(axis_label(axis))
+    ax.set_ylabel("GPP / Earthlike (n2) at same x")
+    ax.set_title("Land-mean GPP relative to Earthlike mix")
+    ax.legend()
+    fig.tight_layout()
+    path = os.path.join(outdir, "gpp_ratio_vs_earth.png")
     fig.savefig(path)
     plt.close(fig)
     return path
@@ -239,6 +286,7 @@ def main(argv=None):
     written = [
         plot_factors(by_atmos, axis, args.outdir),
         plot_overlay(by_atmos, axis, args.outdir),
+        plot_gpp_ratio(by_atmos, axis, args.outdir),
         plot_attribution(records, pick_reference(records), axis, args.outdir),
     ]
     for path in written:

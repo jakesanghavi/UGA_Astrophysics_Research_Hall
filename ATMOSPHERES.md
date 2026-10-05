@@ -136,14 +136,16 @@ those still requires editing the patch and recompiling.
 
 ## GPP diagnostic
 
-`run_gpp_diagnostics.py` is a small grid, not the production sweep. Example:
+`run_gpp_diagnostics.py` is a small grid, not the production sweep.
+`--physics` is one mode for every point, or a per-atmos map (`n2=earth,co2=other`).
+
+Earth / Venus-like / Mars-like comparison (1-bar mixes, 1 year):
 
 ```
 python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \
     --physics n2=earth,co2=other,mars=other
+python plot_gpp_diagnostics.py
 ```
-
-`--physics` can be one mode for every point, or a per-atmos map as above.
 
 It records land-mean β, f(T), fPAR, SW↓, GPP_light, GPP_water, and `Δln` of
 those vs an Earth-like reference.
