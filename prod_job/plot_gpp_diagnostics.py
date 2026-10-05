@@ -318,7 +318,7 @@ def plot_gpp_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
     ax.set_xticklabels([f"{m:g}" for m in masses])
     ax.set_xlabel(r"Planet mass [$M_\oplus$]")
     ax.set_title("GPP by atmosphere")
-    ax.legend()
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
     ax.margins(y=0.14)
     fig.tight_layout()
     path = os.path.join(outdir, "gpp_regime_bars.png")
