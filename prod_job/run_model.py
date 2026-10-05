@@ -11,23 +11,17 @@ from time import time, strftime, gmtime
 # RUN_MODE = "mass_only"
 RUN_MODE = "normal"
 
-# Composition mix. One model_helpers.py serves every regime:
-#   evolved — Earth-like N2/O2, then overlay leftover H/He
-#   n2      — Earth-like N2/O2 (alias: earth)
-#   co2     — Venus-like CO2   (alias: venus)
-#   mars    — Mars-like CO2
-# Overlay any of pN2/pCO2/... via ATMOS_PARAMS to tweak Venus vs Mars without
-# a new helper file (both are CO2-dominated, different fractions/pressure).
+# Composition and physics. See ATMOSPHERES.md.
+#   n2 / earth, co2 / venus (~1 bar Venus mix), mars (~1 bar Mars mix),
+#   evolved, venus_surface (92 bar), mars_surface (6.36 mbar)
+# ATMOS_PARAMS overlays individual partial pressures on the preset.
 ATMOS_TYPE = "n2"
 ATMOS_PARAMS = None
 # ATMOS_PARAMS = {"pCO2": 0.965, "pN2": 0.035}
 
-# How PlaSim gascon (R) and akap (κ) are set:
-#   earth (default) — ExoPlaSim derives gascon from partial pressures; akap
-#                     stays the compiled Earth/exo value 0.286
-#   mars            — Model(mars=True): compile p_mars.f90. Mars-only; also
-#                     changes calendar, ozone, soil, and orbit defaults
-#   other           — write gascon = 8314.46/mmw and akap = R/Cp from the mix
+# earth: ExoPlaSim gascon, akap 0.286
+# mars:  p_mars.f90 (calendar/ozone/soil/orbit too)
+# other: gascon and akap from the mix
 PHYSICS_MODE = "earth"
 
 # Fixed star/orbit used for the Earth reference and for "mass_only" runs.

@@ -8,12 +8,15 @@ from atmos_presets import (
     GAS_KEYS,
     apply_atmos_preset,
     apply_physics_mode,
+    co2_ppmv_from_params,
     resolve_atmos_type,
     resolve_physics_mode,
     thermo_from_params,
 )
+from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
 import sys
 import json
+import hashlib
 import shutil
 import os
 import subprocess
@@ -72,18 +75,55 @@ MSTARS = [0.8, 1.0, 1.2]
 
 # Gas settings
 F_INIT = 0.01
-# Composition (partial-pressure mix). Routed from run_model.py; the GPP
-# diagnostic also flips this per grid point.
-#   evolved — Earth-like mix + H/He left by evolve_atmosphere
-#   n2      — Earth-like N2/O2, no H/He overlay  (alias: earth)
-#   co2     — Venus-like CO2, no H/He overlay    (alias: venus)
-#   mars    — Mars-like CO2 mix, no H/He overlay
+# Composition mix. Routed from run_model.py (see ATMOSPHERES.md).
+#   evolved / n2 / co2 / mars, plus venus_surface and mars_surface.
+#   aliases: earth→n2, venus→co2. co2/mars are ~1 bar mixes, not 92 bar / 6 mbar.
 ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "evolved")
-# How PlaSim R and κ are set. Routed from run_model.py.
-#   earth — ExoPlaSim auto gascon from partial pressures; akap stays 0.286
-#   mars  — compile p_mars.f90 (Mars-only; also changes calendar/ozone/soil)
-#   other — write gascon = 8314.46/mmw and akap = R/Cp from the mix
+# PlaSim R and κ. earth / mars / other — see ATMOSPHERES.md.
 PHYSICS_MODE = os.environ.get("EXOPLASIM_PHYSICS", "earth")
+
+_SIMBA_PATCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plasim_patches", "simba.f90")
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 16), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _plasim_dir():
+    return os.path.join(os.path.dirname(exo.__file__), "plasim")
+
+
+def ensure_simba_patch():
+    """Copy plasim_patches/simba.f90 into the ExoPlaSim src tree.
+
+    Returns True if PlaSim should be recompiled (source changed, or the last
+    compile was not from this patch).
+    """
+    if not os.path.isfile(_SIMBA_PATCH):
+        raise FileNotFoundError("SIMBA patch missing: %s" % _SIMBA_PATCH)
+    dest = os.path.join(_plasim_dir(), "src", "simba.f90")
+    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
+    digest = _sha256_file(_SIMBA_PATCH)
+    dest_ok = os.path.isfile(dest) and _sha256_file(dest) == digest
+    if not dest_ok:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(_SIMBA_PATCH, dest)
+    stamped = False
+    if os.path.isfile(stamp):
+        with open(stamp) as handle:
+            stamped = handle.read().strip() == digest
+    return (not dest_ok) or (not stamped)
+
+
+def mark_simba_patch_compiled():
+    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
+    with open(stamp, "w") as handle:
+        handle.write(_sha256_file(_SIMBA_PATCH) + "\n")
+
 
 os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
 os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
@@ -186,8 +226,7 @@ planet_params = {
         'pCH4': 0.0
     }
 
-# Default planet_params is Earth-like; calculate_veg overwrites gases from the
-# selected atmos_type (and optional atmos_params) before applying PRESSURE_FRACTION.
+# calculate_veg overwrites gases from atmos_type / atmos_params, then PRESSURE_FRACTION.
 
 mass_grid = np.array([
     0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
@@ -458,6 +497,7 @@ def calculate_veg(
         except:
             pass
 
+        need_recompile = ensure_simba_patch()
         planet = exo.Model(
             workdir=f"custom_earthlike_model{to_append}",
             modelname=f"custom_earthlike_model{to_append}",
@@ -468,12 +508,20 @@ def calculate_veg(
             outputtype=OUTPUT_TYPE,
             mpi_opts=mpi_opts,
             mars=model_kwargs["mars"],
+            recompile=need_recompile,
         )
+        if need_recompile:
+            mark_simba_patch_compiled()
 
         planet.debug = True
         planet.verbose = True
 
         planet.configure(**local_params)
+        air_ppmv = co2_ppmv_from_params(local_params)
+        planet._edit_namelist("vegmod_namelist", "CO2VEG", str(plant_co2_ppmv(air_ppmv)))
+        planet._edit_namelist("vegmod_namelist", "CO2VEG_MAX", str(CO2VEG_MAX))
+        planet._edit_namelist("vegmod_namelist", "T_HOT", str(T_HOT_C))
+        planet._edit_namelist("vegmod_namelist", "T_KILL", str(T_KILL_C))
         # Distinct nonzero seed per attempt, from OS entropy so it is independent
         # across worker processes. PlaSim seeds its initial white-noise
         # perturbation from this instead of the wall clock.
@@ -495,7 +543,6 @@ def calculate_veg(
     if planet == 0 or planet is None:
         # Every attempt crashed: distinct from a genuine zero-vegetation result.
         if diagnostics:
-            from gpp_terms import base_record
             return base_record(
                 mass_ratio=mass_ratio,
                 mstar=mstar,
@@ -582,9 +629,9 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
                     so alternate configurations are easy to tell apart.
     output_file   : full override of the output filename (takes precedence over
                     file_tag), used e.g. for the Earth reference baseline.
-    atmos_type    : composition preset (evolved / n2 / co2 / mars; earth→n2, venus→co2).
-    physics_mode  : earth (default) / mars / other — how gascon and akap are set.
-    atmos_params  : optional dict of partial-pressure overrides on top of the preset.
+    atmos_type    : composition preset (see ATMOSPHERES.md).
+    physics_mode  : earth / mars / other.
+    atmos_params  : optional partial-pressure overrides on the preset.
     """
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)

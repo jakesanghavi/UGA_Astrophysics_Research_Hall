@@ -41,11 +41,21 @@ class TestBeta(unittest.TestCase):
         self.assertEqual(gt.beta_co2(cutoff * 0.5), 0.0)
         self.assertGreater(gt.beta_co2(cutoff * 1.5), 0.0)
 
-    def test_venuslike_is_a_large_lever(self):
+    def test_venuslike_plant_co2_is_clamped(self):
         ppmv = ap.co2_ppmv_from_params(ap.VENUSLIKE_GASES)
-        beta = gt.beta_co2(ppmv)
         self.assertGreater(ppmv, 9.0e5)
-        self.assertGreater(beta, 3.0)
+        plant = gt.plant_co2_ppmv(ppmv)
+        self.assertAlmostEqual(plant, gt.CO2VEG_MAX)
+        beta = gt.beta_co2(ppmv)
+        expected = 1.0 + 0.3 * math.log(gt.CO2VEG_MAX / 360.0)
+        self.assertAlmostEqual(beta, expected, places=12)
+        self.assertLess(beta, 1.4)
+        self.assertGreater(beta, 1.2)
+
+    def test_earth_co2_is_below_the_clamp(self):
+        ppmv = ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)
+        self.assertLess(ppmv, gt.CO2VEG_MAX)
+        self.assertAlmostEqual(gt.plant_co2_ppmv(ppmv), ppmv)
 
 
 class TestLimitationFunctions(unittest.TestCase):
@@ -53,6 +63,10 @@ class TestLimitationFunctions(unittest.TestCase):
         self.assertEqual(float(gt.f_temperature(272.15)), 0.0)
         self.assertAlmostEqual(float(gt.f_temperature(273.15 + 2.5)), 0.5, places=12)
         self.assertEqual(float(gt.f_temperature(273.15 + 10.0)), 1.0)
+        self.assertEqual(float(gt.f_temperature(273.15 + 35.0)), 1.0)
+        self.assertAlmostEqual(float(gt.f_temperature(273.15 + 40.0)), 0.5, places=12)
+        self.assertEqual(float(gt.f_temperature(273.15 + 45.0)), 0.0)
+        self.assertEqual(float(gt.f_temperature(273.15 + 50.0)), 0.0)
 
     def test_fpar_beer(self):
         self.assertAlmostEqual(float(gt.f_par(0.0)), 0.0, places=12)
@@ -99,6 +113,7 @@ class TestSummarize(unittest.TestCase):
         self.assertAlmostEqual(rec["fT"], 2.0 / 3.0, places=12)
         self.assertGreater(rec["frac_light_limited"], 0.9)
         self.assertEqual(rec["atmos"], "n2")
+        self.assertAlmostEqual(rec["co2veg_ppmv"], rec["co2_ppmv"])
 
     def test_water_limitation_fraction(self):
         fields = self._toy_fields()
@@ -113,6 +128,15 @@ class TestSummarize(unittest.TestCase):
         self.assertTrue(rec["crashed"])
         self.assertIsNone(rec["gpp"])
         self.assertIsNone(rec["beta"])
+
+    def test_venus_air_co2_clamped_in_summary(self):
+        fields = self._toy_fields()
+        fields["params"] = dict(ap.VENUSLIKE_GASES)
+        fields["atmos_type"] = "co2"
+        rec = gt.summarize_from_fields(**fields)
+        self.assertGreater(rec["co2_ppmv"], 9.0e5)
+        self.assertAlmostEqual(rec["co2veg_ppmv"], gt.CO2VEG_MAX)
+        self.assertLess(rec["beta"], 1.4)
 
 
 class TestAttribution(unittest.TestCase):
@@ -135,7 +159,8 @@ class TestAttribution(unittest.TestCase):
         co2["beta"] = gt.beta_co2(ap.co2_ppmv_from_params(ap.VENUSLIKE_GASES))
         attr = gt.attribution_vs_reference(co2, n2)
         self.assertEqual(attr["dominant_light_term"], "beta")
-        self.assertGreater(attr["dln"]["beta"], math.log(3.0))
+        self.assertGreater(attr["dln"]["beta"], 0.0)
+        self.assertLess(attr["dln"]["beta"], math.log(2.0))
 
 
 class TestPresets(unittest.TestCase):
@@ -163,6 +188,43 @@ class TestPresets(unittest.TestCase):
         ap.apply_atmos_preset(params, "venus", overrides={"pCO2": 0.90, "pN2": 0.10})
         self.assertAlmostEqual(params["pCO2"], 0.90)
         self.assertAlmostEqual(params["pN2"], 0.10)
+
+    def test_surface_presets_are_not_the_defaults(self):
+        self.assertAlmostEqual(ap.total_pressure_bar(ap.VENUSLIKE_GASES), 1.0, delta=0.02)
+        self.assertAlmostEqual(ap.total_pressure_bar(ap.MARSLIKE_GASES), 1.0, delta=0.02)
+        self.assertAlmostEqual(
+            ap.total_pressure_bar(ap.PRESETS["venus_surface"]["gases"]),
+            ap.VENUS_SURFACE_BAR, places=12,
+        )
+        self.assertAlmostEqual(
+            ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"]),
+            ap.MARS_SURFACE_BAR, places=12,
+        )
+        params = {}
+        ap.apply_atmos_preset(params, "co2")
+        self.assertAlmostEqual(
+            ap.total_pressure_bar(params), ap.total_pressure_bar(ap.VENUSLIKE_GASES)
+        )
+        params = {}
+        ap.apply_atmos_preset(params, "mars")
+        self.assertAlmostEqual(
+            ap.total_pressure_bar(params), ap.total_pressure_bar(ap.MARSLIKE_GASES)
+        )
+
+    def test_surface_presets_keep_mole_fractions(self):
+        v1 = ap.mole_fractions(ap.VENUSLIKE_GASES)
+        vs = ap.mole_fractions(ap.PRESETS["venus_surface"]["gases"])
+        for gas in v1:
+            self.assertAlmostEqual(v1[gas], vs[gas], places=12)
+        m1 = ap.mole_fractions(ap.MARSLIKE_GASES)
+        ms = ap.mole_fractions(ap.PRESETS["mars_surface"]["gases"])
+        for gas in m1:
+            self.assertAlmostEqual(m1[gas], ms[gas], places=12)
+
+    def test_surface_aliases_are_opt_in(self):
+        self.assertEqual(ap.resolve_atmos_type("venus"), "co2")
+        self.assertEqual(ap.resolve_atmos_type("venus_surface"), "venus_surface")
+        self.assertEqual(ap.resolve_atmos_type("mars_surface"), "mars_surface")
 
     def test_evolved_hhe_dilutes_co2_ppmv(self):
         params = dict(ap.EARTHLIKE_GASES)
@@ -218,6 +280,14 @@ class TestThermoAndPhysics(unittest.TestCase):
         self.assertEqual(ap.regime_file_tag("mass_only", "earth", "earth"), "_massonly2")
         self.assertEqual(ap.regime_file_tag("mass_only", "venus", "other"), "_massonly_co2_other")
         self.assertEqual(ap.regime_file_tag("mass_only", "mars", "other"), "_massonly_mars_other")
+        self.assertEqual(
+            ap.regime_file_tag("mass_only", "venus_surface", "other"),
+            "_massonly_venus_surface_other",
+        )
+        self.assertEqual(
+            ap.regime_file_tag("normal", "mars_surface", "other"),
+            "_normal_mars_surface_other",
+        )
 
 
 class TestDiagnosticCli(unittest.TestCase):
@@ -232,6 +302,12 @@ class TestDiagnosticCli(unittest.TestCase):
     def test_aliases_and_mars_are_accepted(self):
         args = runner.parse_args(["--dry-run", "--atmos", "earth,venus,mars", "--masses", "1"])
         self.assertEqual(args.atmos, ["n2", "co2", "mars"])
+
+    def test_surface_presets_are_accepted(self):
+        args = runner.parse_args([
+            "--dry-run", "--atmos", "venus_surface,mars_surface", "--masses", "1",
+        ])
+        self.assertEqual(args.atmos, ["venus_surface", "mars_surface"])
 
     def test_physics_mapping_matches_demo(self):
         args = runner.parse_args([
@@ -303,6 +379,15 @@ class TestPlotter(unittest.TestCase):
                 path = os.path.join(outdir, name)
                 self.assertTrue(os.path.isfile(path), name)
                 self.assertGreater(os.path.getsize(path), 1000)
+
+
+class TestSimbaPatch(unittest.TestCase):
+    def test_patch_declares_namelist_vars(self):
+        path = os.path.join(os.path.dirname(__file__), "plasim_patches", "simba.f90")
+        self.assertTrue(os.path.isfile(path), path)
+        text = open(path).read()
+        for token in ("co2veg", "co2veg_max", "t_hot", "t_kill", "zco2p"):
+            self.assertIn(token, text)
 
 
 if __name__ == "__main__":

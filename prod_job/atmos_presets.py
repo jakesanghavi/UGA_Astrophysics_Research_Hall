@@ -1,19 +1,7 @@
-"""Atmosphere composition and gas-constant knobs for the production pipeline.
+"""Atmosphere composition and PlaSim gas-constant knobs.
 
-Composition (`atmos_type`) and thermodynamics (`physics_mode`) are separate:
-
-- Composition picks the partial-pressure mix (and whether H/He evolution
-  overwrites pH2/pHe). Venus vs Mars are both CO2-dominated but different
-  mixes; pass ``atmos_params`` to tweak either without a new helper file.
-- Physics mode decides how PlaSim's ``gascon`` (R) and ``akap`` (κ = R/Cp)
-  are set. ExoPlaSim derives ``gascon`` from partial pressures but leaves
-  ``akap`` hardcoded at 0.286 (Earth diatomic) unless we write it ourselves.
-
-Diagnostic default knobs stay ``evolved`` / ``n2`` / ``co2`` so the GPP
-diagnostic grid is unchanged. ``earth`` aliases ``n2``; ``venus`` aliases
-``co2``. ``mars`` is the Curiosity/Mahaffy dry-air mix at ~1 bar (same
-normalization as the Venus-like preset, which is also ~1 bar of Venus air
-rather than 92 bar).
+Composition (`atmos_type`) and thermodynamics (`physics_mode`) are separate.
+See ATMOSPHERES.md.
 """
 
 GAS_KEYS = (
@@ -82,9 +70,8 @@ VENUSLIKE_GASES = {
     "pCH4": 0.0,
 }
 
-# Mars dry-air mix (Curiosity / Mahaffy et al. 2013), normalized to ~1 bar
-# so Venus vs Mars is a composition tweak, not a 6 mbar vs 1 bar pressure leap.
-# Override via atmos_params (e.g. scale all gases by 6.36e-3) for true Mars p_surf.
+# Mars dry-air mix (Curiosity / Mahaffy et al. 2013) at ~1 bar, same
+# normalization as VENUSLIKE_GASES. Surface-pressure versions are separate presets.
 MARSLIKE_GASES = {
     "pH2": 0.0,
     "pHe": 0.0,
@@ -97,6 +84,24 @@ MARSLIKE_GASES = {
     "pH2O": 0.0,
     "pCH4": 0.0,
 }
+
+# Observed surface pressures. Used only by the *_surface presets, not by
+# co2 / mars / venus (those stay ~1 bar mole-fraction mixes).
+VENUS_SURFACE_BAR = 92.0
+MARS_SURFACE_BAR = 6.36e-3
+
+
+def gases_at_pressure(gases, p_total_bar):
+    """Scale a mix so partial pressures sum to p_total_bar. Mole fractions unchanged."""
+    current = sum(float(gases.get(k, 0.0) or 0.0) for k in GAS_KEYS)
+    if current <= 0.0:
+        raise ValueError("empty mix")
+    factor = float(p_total_bar) / current
+    return {k: float(gases.get(k, 0.0) or 0.0) * factor for k in GAS_KEYS}
+
+
+VENUS_SURFACE_GASES = gases_at_pressure(VENUSLIKE_GASES, VENUS_SURFACE_BAR)
+MARS_SURFACE_GASES = gases_at_pressure(MARSLIKE_GASES, MARS_SURFACE_BAR)
 
 PRESETS = {
     "evolved": {
@@ -112,16 +117,26 @@ PRESETS = {
     "co2": {
         "gases": VENUSLIKE_GASES,
         "apply_hhe": False,
-        "label": "Venuslike CO2",
+        "label": "Venuslike CO2 (~1 bar)",
     },
     "mars": {
         "gases": MARSLIKE_GASES,
         "apply_hhe": False,
-        "label": "Marslike CO2",
+        "label": "Marslike CO2 (~1 bar)",
+    },
+    "venus_surface": {
+        "gases": VENUS_SURFACE_GASES,
+        "apply_hhe": False,
+        "label": "Venus 92 bar",
+    },
+    "mars_surface": {
+        "gases": MARS_SURFACE_GASES,
+        "apply_hhe": False,
+        "label": "Mars 6.36 mbar",
     },
 }
 
-# GPP-diagnostic default grid: the original three knobs, not mars.
+# GPP-diagnostic default grid: the original three knobs, not mars / surface-P.
 ATMOS_TYPES = ("evolved", "n2", "co2")
 PRESET_ALIASES = {"earth": "n2", "venus": "co2"}
 PHYSICS_MODES = ("earth", "mars", "other")
@@ -131,7 +146,7 @@ def resolve_atmos_type(atmos_type):
     """Map aliases (earth, venus) onto canonical PRESETS keys."""
     key = PRESET_ALIASES.get(atmos_type, atmos_type)
     if key not in PRESETS:
-        known = list(ATMOS_TYPES) + ["mars"] + list(PRESET_ALIASES)
+        known = list(PRESETS) + list(PRESET_ALIASES)
         raise ValueError(f"Unknown atmos_type {atmos_type!r}; expected one of {known}")
     return key
 
@@ -145,12 +160,7 @@ def resolve_physics_mode(physics_mode):
 
 
 def apply_atmos_preset(params, atmos_type, overrides=None):
-    """Overwrite gas partial pressures on a planet-params dict. Returns the preset.
-
-    ``overrides`` is an optional dict of pN2/pCO2/... values applied on top of
-    the preset, so Venus vs Mars (both CO2-dominated) can be tweaked from
-    run_model.py without a new helper file.
-    """
+    """Write the preset's partial pressures onto params. Optional overrides on top."""
     key = resolve_atmos_type(atmos_type)
     preset = PRESETS[key]
     params.update(preset["gases"])
@@ -197,11 +207,7 @@ def mmw_from_params(params):
 
 
 def thermo_from_params(params):
-    """gascon = R_UNIV/mmw and akap = R/Cp for the current mix.
-
-    ``gascon`` matches ExoPlaSim's configure() formula. ``akap`` is what
-    ExoPlaSim does *not* derive (p_exo.f90 hardcodes 0.286).
-    """
+    """gascon = R_UNIV/mmw and akap = R/Cp for the current mix."""
     fractions = mole_fractions(params)
     mmw = sum(fractions[gas] * SMWS[gas] for gas in fractions)
     cp_molar = sum(fractions[gas] * CP_MOLAR[gas] for gas in fractions)
@@ -213,15 +219,11 @@ def thermo_from_params(params):
 
 
 def apply_physics_mode(local_params, physics_mode):
-    """Set gascon/akap on ``local_params`` and return exo.Model kwargs.
+    """Set gascon/akap on local_params; return exo.Model kwargs (mars flag).
 
-    - ``earth`` (default): do not pass gascon/akap. ExoPlaSim derives gascon
-      from partial pressures; akap stays the compiled Earth/exo 0.286.
-    - ``mars``: ``Model(mars=True)`` so PlaSim compiles p_mars.f90. That module
-      also changes calendar, ozone, soil moisture, and orbit defaults — use
-      only for actual Mars, not for a Mars-composition planet at 1 AU.
-    - ``other``: write gascon = 8314.46/mmw and akap = R/Cp from the mix
-      (needed for Venus/Mars-composition planets that should not use p_mars).
+    earth: leave gascon/akap to ExoPlaSim (akap stays 0.286).
+    mars: Model(mars=True) → p_mars.f90 (calendar/ozone/soil/orbit too).
+    other: write gascon and akap from the mix.
     """
     mode = resolve_physics_mode(physics_mode)
     local_params.pop("gascon", None)
@@ -250,10 +252,9 @@ def apply_physics_mode(local_params, physics_mode):
 
 
 def regime_file_tag(run_mode, atmos_type, physics_mode):
-    """Filename tag so composition/physics regimes do not clobber each other.
+    """Filename tag so composition/physics combos do not overwrite each other.
 
-    The production default (n2 + earth physics) keeps the historical names
-    ``_massonly2`` / ``_normal_n2`` so existing output files still match.
+    n2 + earth physics keeps the old names `_massonly2` / `_normal_n2`.
     """
     atmos = resolve_atmos_type(atmos_type)
     physics = resolve_physics_mode(physics_mode)

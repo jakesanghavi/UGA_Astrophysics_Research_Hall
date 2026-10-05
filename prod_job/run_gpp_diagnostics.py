@@ -1,25 +1,8 @@
 #!/usr/bin/env python3
-"""Small-grid SIMBA GPP-term diagnostic.
+"""Small-grid SIMBA GPP-term diagnostic. Not a production sweep.
 
-Not a production sweep. Default is 3 atmosphere knobs × 3 planet masses at
-1 Msun / 1 AU, one model year. Composition is selected in `run_model.py`
-(`ATMOS_TYPE` / `ATMOS_PARAMS`) rather than swapping helper files:
-
-    evolved  Earth-like mix + H/He from evolve_atmosphere
-    n2       Earth-like N2/O2, no H/He overlay (alias: earth)
-    co2      Venus-like CO2, no H/He overlay (alias: venus)
-    mars     Mars-like CO2 mix, no H/He overlay
-
-Usage (from prod_job/, with the project venv):
-
-    python run_gpp_diagnostics.py --dry-run
-    python run_gpp_diagnostics.py
-    python run_gpp_diagnostics.py --atmos n2 --masses 0.5,1 --years 1
-    python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \\
-        --physics n2=earth,co2=other,mars=other
-    python plot_gpp_diagnostics.py
-
-Then plot. This script does not launch the full MSTARS × HZ × MASS_RATIOS grid.
+Default: evolved/n2/co2 × 3 masses at 1 Msun / 1 AU, one year.
+See ATMOSPHERES.md for presets (including venus_surface / mars_surface).
 """
 
 from __future__ import annotations
@@ -55,8 +38,8 @@ def parse_atmos_list(text):
             unknown.append(name)
     if unknown:
         raise argparse.ArgumentTypeError(
-            f"unknown atmos type(s) {unknown}; expected evolved/n2/co2/mars "
-            f"(aliases: earth, venus)"
+            f"unknown atmos type(s) {unknown}; expected evolved/n2/co2/mars/"
+            f"venus_surface/mars_surface (aliases: earth, venus)"
         )
     return resolved
 
@@ -178,7 +161,7 @@ def parse_args(argv=None):
         "--atmos",
         type=parse_atmos_list,
         default=list(ATMOS_TYPES),
-        help="comma-separated knobs: evolved,n2,co2,mars (default: evolved,n2,co2)",
+        help="comma-separated knobs: evolved,n2,co2,mars,venus_surface,mars_surface",
     )
     parser.add_argument(
         "--physics",
