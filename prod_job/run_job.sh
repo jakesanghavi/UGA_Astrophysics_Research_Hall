@@ -33,4 +33,6 @@ export EXOPLASIM_WORKERS=$(( CORES / EXOPLASIM_NCPUS ))
 # mpiexec, which oversubscribes cores and clobbers shared output files.
 # Instead, exoplasim launches its own `mpiexec -np NCPUS` per planet, and
 # run_model.py's process pool runs EXOPLASIM_WORKERS planets concurrently.
+# Atmosphere mix / physics mode are selected at the top of run_model.py
+# (ATMOS_TYPE, PHYSICS_MODE, ATMOS_PARAMS), not by swapping helper files.
 python run_model.py

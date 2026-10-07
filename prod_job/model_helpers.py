@@ -4,9 +4,19 @@ from matplotlib import pyplot as plt
 from veg_utils import calc_f_ret_big_rcb, calc_r_c, calc_r_B, calc_rho_rcb, calc_m_atm, calc_r_prime_b, calc_hz_percentiles
 from constants import mearth, Gsi, pi, rearth, lsol, rsol, sigma_SB
 from atm_mass_frac import evolve_atmosphere
-from atmos_presets import apply_atmos_preset
+from atmos_presets import (
+    GAS_KEYS,
+    apply_atmos_preset,
+    apply_physics_mode,
+    co2_ppmv_from_params,
+    resolve_atmos_type,
+    resolve_physics_mode,
+    thermo_from_params,
+)
+from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
 import sys
 import json
+import hashlib
 import shutil
 import os
 import subprocess
@@ -65,12 +75,55 @@ MSTARS = [0.8, 1.0, 1.2]
 
 # Gas settings
 F_INIT = 0.01
-# Atmosphere composition knob. Matches the three model_helpers* variants:
-#   evolved — Earth-like mix + H/He left by evolve_atmosphere (model_helpers.py)
-#   n2      — Earth-like N2/O2, no H/He overlay (model_helpers_n2.py)
-#   co2     — Venus-like CO2, no H/He overlay (model_helpers_co2.py)
-# Production sweeps keep the evolved default. The GPP diagnostic flips this.
+# Composition mix. Routed from run_model.py (see ATMOSPHERES.md).
+#   evolved / n2 / co2 / mars, plus venus_surface and mars_surface.
+#   aliases: earth→n2, venus→co2. co2/mars are ~1 bar mixes, not 92 bar / 6 mbar.
 ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "evolved")
+# PlaSim R and κ. earth / mars / other — see ATMOSPHERES.md.
+PHYSICS_MODE = os.environ.get("EXOPLASIM_PHYSICS", "earth")
+
+_SIMBA_PATCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plasim_patches", "simba.f90")
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 16), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _plasim_dir():
+    return os.path.join(os.path.dirname(exo.__file__), "plasim")
+
+
+def ensure_simba_patch():
+    """Copy plasim_patches/simba.f90 into the ExoPlaSim src tree.
+
+    Returns True if PlaSim should be recompiled (source changed, or the last
+    compile was not from this patch).
+    """
+    if not os.path.isfile(_SIMBA_PATCH):
+        raise FileNotFoundError("SIMBA patch missing: %s" % _SIMBA_PATCH)
+    dest = os.path.join(_plasim_dir(), "src", "simba.f90")
+    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
+    digest = _sha256_file(_SIMBA_PATCH)
+    dest_ok = os.path.isfile(dest) and _sha256_file(dest) == digest
+    if not dest_ok:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(_SIMBA_PATCH, dest)
+    stamped = False
+    if os.path.isfile(stamp):
+        with open(stamp) as handle:
+            stamped = handle.read().strip() == digest
+    return (not dest_ok) or (not stamped)
+
+
+def mark_simba_patch_compiled():
+    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
+    with open(stamp, "w") as handle:
+        handle.write(_sha256_file(_SIMBA_PATCH) + "\n")
+
 
 os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
 os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
@@ -173,11 +226,7 @@ planet_params = {
         'pCH4': 0.0
     }
 
-gas_params = ['pH2', 'pHe', 'pN2', 'pO2', 'pCO2', 'pAr', 'pNe', 'pKr', 'pH2O', 'pCH4']
-
-for param in gas_params:
-    if param in planet_params:
-        planet_params[param] *= PRESSURE_FRACTION
+# calculate_veg overwrites gases from atmos_type / atmos_params, then PRESSURE_FRACTION.
 
 mass_grid = np.array([
     0.010, 0.015, 0.020, 0.030, 0.040, 0.050, 0.060,
@@ -284,6 +333,7 @@ def extract_gpp_diagnostics(
     radius,
     toa_flux,
     startemp,
+    physics_mode="earth",
 ):
     """Land-mean SIMBA GPP factors from a finished planet's postprocessed output."""
     from gpp_terms import land_mask_from_lsm, summarize_from_fields
@@ -329,6 +379,7 @@ def extract_gpp_diagnostics(
         startemp=startemp,
         avg_gpp=avg_gpp,
         tot_gpp=tot_gpp,
+        physics_mode=physics_mode,
     )
 
 
@@ -339,20 +390,27 @@ def calculate_veg(
     resolution,
     to_append,
     atmos_type=None,
+    physics_mode=None,
+    atmos_params=None,
     diagnostics=False,
 ):
     r_new = radius_noack(mass_ratio)
     g_new = 9.80665 * mass_ratio / (r_new ** 2)
     startemp, flux = stellar_mass_to_temp_flux(mstar, au)
-    atmos_type = atmos_type or ATMOS_TYPE
-    
+    atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
+
     # Cap flux as it crashes model at low AU
     # flux = min(flux, 2000)
 
     # Work on a per-call copy so concurrent grid points never clobber each
     # other's configuration (and so results are identical to the sequential run).
     local_params = dict(planet_params)
-    preset = apply_atmos_preset(local_params, atmos_type)
+    preset = apply_atmos_preset(local_params, atmos_type, overrides=atmos_params)
+    if PRESSURE_FRACTION != 1:
+        for gas_key in GAS_KEYS:
+            if gas_key in local_params:
+                local_params[gas_key] *= PRESSURE_FRACTION
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
@@ -402,6 +460,15 @@ def calculate_veg(
         local_params['pHe'] = 0.25 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 * 10 ** (-10)  / (4 * pi * (r_new * rearth) ** 4)
         local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
+    model_kwargs = apply_physics_mode(local_params, physics_mode)
+    thermo = thermo_from_params(local_params)
+    print(
+        f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
+        f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
+        f"akap={thermo['akap']:.4f} (earth mode leaves akap=0.286; "
+        f"other writes this akap; mars uses p_mars.f90)"
+    )
+
     # When running grid points concurrently, each planet launches its own
     # mpiexec. Without this, every mpiexec binds its ranks starting at core 0,
     # so concurrent runs fight over the same cores. "--bind-to none" lets the OS
@@ -430,6 +497,7 @@ def calculate_veg(
         except:
             pass
 
+        need_recompile = ensure_simba_patch()
         planet = exo.Model(
             workdir=f"custom_earthlike_model{to_append}",
             modelname=f"custom_earthlike_model{to_append}",
@@ -438,13 +506,22 @@ def calculate_veg(
             layers=NLAYERS,
             precision=PRECISION,
             outputtype=OUTPUT_TYPE,
-            mpi_opts=mpi_opts
+            mpi_opts=mpi_opts,
+            mars=model_kwargs["mars"],
+            recompile=need_recompile,
         )
+        if need_recompile:
+            mark_simba_patch_compiled()
 
         planet.debug = True
         planet.verbose = True
 
         planet.configure(**local_params)
+        air_ppmv = co2_ppmv_from_params(local_params)
+        planet._edit_namelist("vegmod_namelist", "CO2VEG", str(plant_co2_ppmv(air_ppmv)))
+        planet._edit_namelist("vegmod_namelist", "CO2VEG_MAX", str(CO2VEG_MAX))
+        planet._edit_namelist("vegmod_namelist", "T_HOT", str(T_HOT_C))
+        planet._edit_namelist("vegmod_namelist", "T_KILL", str(T_KILL_C))
         # Distinct nonzero seed per attempt, from OS entropy so it is independent
         # across worker processes. PlaSim seeds its initial white-noise
         # perturbation from this instead of the wall clock.
@@ -466,12 +543,12 @@ def calculate_veg(
     if planet == 0 or planet is None:
         # Every attempt crashed: distinct from a genuine zero-vegetation result.
         if diagnostics:
-            from gpp_terms import base_record
             return base_record(
                 mass_ratio=mass_ratio,
                 mstar=mstar,
                 au=au,
                 atmos_type=atmos_type,
+                physics_mode=physics_mode,
                 crashed=True,
                 gravity=g_new,
                 radius=r_new,
@@ -503,12 +580,14 @@ def calculate_veg(
             r_new,
             flux,
             startemp,
+            physics_mode=physics_mode,
         )
         
     return [average_veg, tot_veg]
 
 
-def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type):
+def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
+                    physics_mode=None, atmos_params=None):
     """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
     return calculate_veg(
         mass_ratio,
@@ -517,14 +596,20 @@ def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_typ
         resolution,
         workdir_suffix,
         atmos_type=atmos_type,
+        physics_mode=physics_mode,
+        atmos_params=atmos_params,
         diagnostics=True,
     )
 
 
-def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
+def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
+                atmos_type, physics_mode, atmos_params):
     """Compute a single grid point. Runs inside a worker process for isolation
     (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
-    veg_amt = calculate_veg(mass_ratio, mstar, au, resolution, workdir_suffix)
+    veg_amt = calculate_veg(
+        mass_ratio, mstar, au, resolution, workdir_suffix,
+        atmos_type=atmos_type, physics_mode=physics_mode, atmos_params=atmos_params,
+    )
     flux = stellar_mass_to_temp_flux(mstar, au)
     veg_amt.append(flux[0])
     veg_amt.append(flux[1])
@@ -533,17 +618,24 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix):
     return [float(v) if v is not None else None for v in veg_amt]
 
 
-def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None):
+def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
+              atmos_type=None, physics_mode=None, atmos_params=None):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
-    points      : explicit list of (mstar, au) tuples to evaluate. If None
-                  (default), sweep every star in MSTARS across its habitable-zone
-                  percentiles (the original behavior).
-    file_tag    : inserted into the default output filename (e.g. "_massonly")
-                  so alternate configurations are easy to tell apart.
-    output_file : full override of the output filename (takes precedence over
-                  file_tag), used e.g. for the Earth reference baseline.
+    points        : explicit list of (mstar, au) tuples to evaluate. If None
+                    (default), sweep every star in MSTARS across its habitable-zone
+                    percentiles (the original behavior).
+    file_tag      : inserted into the default output filename (e.g. "_massonly")
+                    so alternate configurations are easy to tell apart.
+    output_file   : full override of the output filename (takes precedence over
+                    file_tag), used e.g. for the Earth reference baseline.
+    atmos_type    : composition preset (see ATMOSPHERES.md).
+    physics_mode  : earth / mars / other.
+    atmos_params  : optional partial-pressure overrides on the preset.
     """
+    atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
+
     # Change name based on resolution
     res_suffix = "" if resolution == 'T21' else resolution
     if output_file is None:
@@ -571,7 +663,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             continue
         # Unique workdir per task so concurrent runs never share a directory.
         safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
-        workdir_suffix = f"{res_suffix}_{safe}"
+        workdir_suffix = f"{res_suffix}_{atmos_type}_{physics_mode}_{safe}"
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:
@@ -587,7 +679,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     # compilation race. It is also the whole job when WORKERS == 1.
     ms, au_key, mstar, au, workdir_suffix = tasks[0]
     try:
-        _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
+        _save(ms, au_key, _grid_point(
+            mass_ratio, mstar, au, resolution, workdir_suffix,
+            atmos_type, physics_mode, atmos_params,
+        ))
     except Exception as e:
         print(f"Error! ({ms}, {au_key}): {e}")
 
@@ -598,7 +693,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     if WORKERS <= 1:
         for ms, au_key, mstar, au, workdir_suffix in remaining:
             try:
-                _save(ms, au_key, _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix))
+                _save(ms, au_key, _grid_point(
+                    mass_ratio, mstar, au, resolution, workdir_suffix,
+                    atmos_type, physics_mode, atmos_params,
+                ))
             except Exception as e:
                 print(f"Error! ({ms}, {au_key}): {e}")
         return
@@ -606,7 +704,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     # Independent grid points run concurrently in isolated worker processes.
     with ProcessPoolExecutor(max_workers=WORKERS) as pool:
         future_map = {
-            pool.submit(_grid_point, mass_ratio, mstar, au, resolution, workdir_suffix): (ms, au_key)
+            pool.submit(
+                _grid_point, mass_ratio, mstar, au, resolution, workdir_suffix,
+                atmos_type, physics_mode, atmos_params,
+            ): (ms, au_key)
             for ms, au_key, mstar, au, workdir_suffix in remaining
         }
         for fut in as_completed(future_map):

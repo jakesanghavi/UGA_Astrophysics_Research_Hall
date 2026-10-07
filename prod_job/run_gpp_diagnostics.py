@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
-"""Small-grid SIMBA GPP-term diagnostic.
+"""Small-grid SIMBA GPP-term diagnostic. Not a production sweep.
 
-Not a production sweep. Default is 3 atmosphere knobs × 3 planet masses at
-1 Msun / 1 AU, one model year. Flip the knobs rather than swapping
-`model_helpers_n2.py` / `model_helpers_co2.py`:
-
-    evolved  Earth-like mix + H/He from evolve_atmosphere
-    n2       Earth-like N2/O2, no H/He overlay
-    co2      Venus-like CO2, no H/He overlay
-
-Usage (from prod_job/, with the project venv):
-
-    python run_gpp_diagnostics.py --dry-run
-    python run_gpp_diagnostics.py
-    python run_gpp_diagnostics.py --atmos n2 --masses 0.5,1 --years 1
-    python run_gpp_diagnostics.py --axis au --atmos n2,co2 --masses 1 --years 1
-    python plot_gpp_diagnostics.py
-
-Then plot. This script does not launch the full MSTARS × HZ × MASS_RATIOS grid.
+Default: evolved/n2/co2 × 3 masses at 1 Msun / 1 AU, one year.
+See ATMOSPHERES.md for presets (including venus_surface / mars_surface).
 """
 
 from __future__ import annotations
@@ -28,7 +13,7 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from atmos_presets import ATMOS_TYPES
+from atmos_presets import ATMOS_TYPES, resolve_atmos_type, resolve_physics_mode
 from veg_utils import calc_hz_percentiles
 
 DEFAULT_MASSES = [0.25, 1.0, 2.0]
@@ -44,16 +29,52 @@ def parse_float_list(text):
 
 def parse_atmos_list(text):
     names = [part.strip() for part in text.split(",") if part.strip()]
-    unknown = [name for name in names if name not in ATMOS_TYPES]
+    resolved = []
+    unknown = []
+    for name in names:
+        try:
+            resolved.append(resolve_atmos_type(name))
+        except ValueError:
+            unknown.append(name)
     if unknown:
         raise argparse.ArgumentTypeError(
-            f"unknown atmos type(s) {unknown}; expected one of {list(ATMOS_TYPES)}"
+            f"unknown atmos type(s) {unknown}; expected evolved/n2/co2/mars/"
+            f"venus_surface/mars_surface (aliases: earth, venus)"
         )
-    return names
+    return resolved
+
+
+def parse_physics_spec(text):
+    """One mode for every point, or per-atmos mapping like n2=earth,co2=other."""
+    text = (text or "").strip()
+    if not text:
+        return "earth"
+    if "=" not in text:
+        return resolve_physics_mode(text)
+    mapping = {}
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise argparse.ArgumentTypeError(
+                f"physics mapping {text!r} must look like n2=earth,co2=other"
+            )
+        atmos, mode = part.split("=", 1)
+        mapping[resolve_atmos_type(atmos.strip())] = resolve_physics_mode(mode.strip())
+    if not mapping:
+        raise argparse.ArgumentTypeError("empty --physics mapping")
+    return mapping
+
+
+def physics_for(atmos, spec):
+    if isinstance(spec, dict):
+        return spec.get(atmos, "earth")
+    return spec or "earth"
 
 
 def build_tasks(args):
-    """Return (atmos, mass, mstar, au) tuples for the requested tiny grid."""
+    """Return (atmos, mass, mstar, au, physics) tuples for the requested tiny grid."""
     atmos_types = args.atmos
     masses = args.masses
     if args.axis == "mass":
@@ -78,14 +99,15 @@ def build_tasks(args):
 
     tasks = []
     for atmos in atmos_types:
+        physics = physics_for(atmos, args.physics)
         for mass in masses:
             for mstar, au in points:
-                tasks.append((atmos, mass, mstar, au))
+                tasks.append((atmos, mass, mstar, au, physics))
     return tasks
 
 
-def record_key(atmos, mass, mstar, au):
-    return f"{atmos}|{mass}|{mstar}|{au}"
+def record_key(atmos, mass, mstar, au, physics="earth"):
+    return f"{atmos}|{mass}|{mstar}|{au}|{physics}"
 
 
 def load_existing(path):
@@ -102,7 +124,13 @@ def load_existing(path):
 
 def index_records(records):
     return {
-        record_key(rec["atmos"], rec["mass_ratio"], rec["mstar"], rec["au"]): rec
+        record_key(
+            rec["atmos"],
+            rec["mass_ratio"],
+            rec["mstar"],
+            rec["au"],
+            rec.get("physics") or "earth",
+        ): rec
         for rec in records
         if rec.get("atmos") is not None
     }
@@ -113,6 +141,7 @@ def save_bundle(path, args, records):
         "axis": args.axis,
         "years": args.years,
         "atmos": args.atmos,
+        "physics": args.physics,
         "records": records,
     }
     with open(path, "w") as handle:
@@ -120,10 +149,10 @@ def save_bundle(path, args, records):
         handle.write("\n")
 
 
-def workdir_suffix(atmos, mass, mstar, au):
+def workdir_suffix(atmos, mass, mstar, au, physics):
     def safe(value):
         return str(value).replace(".", "p").replace("-", "m")
-    return f"_diag_{atmos}_{safe(mass)}_{safe(mstar)}_{safe(au)}"
+    return f"_diag_{atmos}_{physics}_{safe(mass)}_{safe(mstar)}_{safe(au)}"
 
 
 def parse_args(argv=None):
@@ -132,7 +161,13 @@ def parse_args(argv=None):
         "--atmos",
         type=parse_atmos_list,
         default=list(ATMOS_TYPES),
-        help="comma-separated knobs: evolved,n2,co2 (default: all three)",
+        help="comma-separated knobs: evolved,n2,co2,mars,venus_surface,mars_surface",
+    )
+    parser.add_argument(
+        "--physics",
+        type=parse_physics_spec,
+        default="earth",
+        help="earth|mars|other, or per-atmos map n2=earth,co2=other (default: earth)",
     )
     parser.add_argument(
         "--masses",
@@ -201,10 +236,10 @@ def parse_args(argv=None):
 
 def print_plan(tasks, args):
     print(f"GPP diagnostic: {len(tasks)} ExoPlaSim run(s), {args.years} year(s) each")
-    print(f"  axis={args.axis}  atmos={args.atmos}")
-    print("  (atmos, mass, M*, AU)")
-    for atmos, mass, mstar, au in tasks:
-        print(f"    {atmos:8s}  {mass:g}  {mstar:g}  {au:g}")
+    print(f"  axis={args.axis}  atmos={args.atmos}  physics={args.physics}")
+    print("  (atmos, physics, mass, M*, AU)")
+    for atmos, mass, mstar, au, physics in tasks:
+        print(f"    {atmos:8s}  {physics:5s}  {mass:g}  {mstar:g}  {au:g}")
     print(f"  output: {args.output}")
     print("This is a diagnostic grid, not the production sweep.")
 
@@ -217,8 +252,8 @@ def run_tasks(tasks, args):
     records = [] if args.force else load_existing(args.output)
     by_key = index_records(records)
     pending = []
-    for atmos, mass, mstar, au in tasks:
-        key = record_key(atmos, mass, mstar, au)
+    for atmos, mass, mstar, au, physics in tasks:
+        key = record_key(atmos, mass, mstar, au, physics)
         existing = by_key.get(key)
         if (
             not args.force
@@ -227,7 +262,9 @@ def run_tasks(tasks, args):
             and existing.get("gpp") is not None
         ):
             continue
-        pending.append((atmos, mass, mstar, au, workdir_suffix(atmos, mass, mstar, au)))
+        pending.append(
+            (atmos, mass, mstar, au, physics, workdir_suffix(atmos, mass, mstar, au, physics))
+        )
 
     if not pending:
         print("Nothing to run (all points already present).")
@@ -235,45 +272,58 @@ def run_tasks(tasks, args):
         return
 
     def store(record):
-        key = record_key(record["atmos"], record["mass_ratio"], record["mstar"], record["au"])
+        key = record_key(
+            record["atmos"],
+            record["mass_ratio"],
+            record["mstar"],
+            record["au"],
+            record.get("physics") or "earth",
+        )
         by_key[key] = record
         save_bundle(args.output, args, list(by_key.values()))
         crashed = record.get("crashed")
         gpp = record.get("gpp")
         frac = record.get("frac_light_limited")
+        beta = record.get("beta")
         print(
-            f"  {record['atmos']:8s} M={record['mass_ratio']:g} "
+            f"  {record['atmos']:8s} physics={record.get('physics', 'earth'):5s} "
+            f"M={record['mass_ratio']:g} "
             f"M*={record['mstar']:g} AU={record['au']:g}  "
-            f"{'CRASH' if crashed else f'GPP={gpp}  light_frac={frac}'}"
+            f"{'CRASH' if crashed else f'GPP={gpp}  beta={beta}  light_frac={frac}'}"
         )
 
     workers = mh.WORKERS
     first = pending[0]
     rest = pending[1:]
     print(f"Running {len(pending)} point(s) with N_YEARS={mh.N_YEARS}, WORKERS={workers}")
-    store(mh.diag_grid_point(first[1], first[2], first[3], mh.RESOLUTION, first[4], first[0]))
+    store(mh.diag_grid_point(
+        first[1], first[2], first[3], mh.RESOLUTION, first[5], first[0],
+        physics_mode=first[4],
+    ))
 
     if not rest:
         return
 
     if workers <= 1:
-        for atmos, mass, mstar, au, suffix in rest:
-            store(mh.diag_grid_point(mass, mstar, au, mh.RESOLUTION, suffix, atmos))
+        for atmos, mass, mstar, au, physics, suffix in rest:
+            store(mh.diag_grid_point(
+                mass, mstar, au, mh.RESOLUTION, suffix, atmos, physics_mode=physics,
+            ))
         return
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
         future_map = {
             pool.submit(
-                mh.diag_grid_point, mass, mstar, au, mh.RESOLUTION, suffix, atmos
-            ): (atmos, mass, mstar, au)
-            for atmos, mass, mstar, au, suffix in rest
+                mh.diag_grid_point, mass, mstar, au, mh.RESOLUTION, suffix, atmos, physics
+            ): (atmos, mass, mstar, au, physics)
+            for atmos, mass, mstar, au, physics, suffix in rest
         }
         for fut in as_completed(future_map):
-            atmos, mass, mstar, au = future_map[fut]
+            atmos, mass, mstar, au, physics = future_map[fut]
             try:
                 store(fut.result())
             except Exception as exc:
-                print(f"Error! ({atmos}, {mass}, {mstar}, {au}): {exc}")
+                print(f"Error! ({atmos}, {physics}, {mass}, {mstar}, {au}): {exc}")
 
 
 def main(argv=None):

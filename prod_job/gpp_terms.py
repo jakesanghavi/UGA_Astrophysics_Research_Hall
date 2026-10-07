@@ -1,20 +1,17 @@
 """SIMBA light-limited GPP factor reconstruction.
 
-Matches `simba.f90` `vegstep` (ExoPlaSim):
+Matches patched `plasim_patches/simba.f90` vegstep:
 
-    zbeta = max(0, 1 + 0.3 * ln((CO2 - 0) / (360 - 0)))   # 0 if CO2 ~ 0
-    zft   = clip((T_sfc_K - 273.15) / 5, 0, 1)
-    zveg  = 1 - exp(-0.5 * LAI)   # output LAI is inverted from cover
+    zco2p = min(air CO2 ppmv, 1000)     # plant CO2; radiation still uses air CO2
+    zbeta = min(1, max(0, 1 + 0.3 * ln(zco2p / 360)))   # 0 if zco2p ~ 0; cap 1.0
+    zft   = clip((T_sfc_C) / 5, 0, 1)           # thaw 0–5 C
+            * clip((45 - T_sfc_C) / 10, 0, 1)   # if T > 35 C; 0 at 45 C
+    zveg  = 1 - exp(-0.5 * LAI)
     zgppl = 3.4e-10 * zbeta * zft * zveg * SW_down
     zgpp  = min(zgppl, zgppw)
 
-The docs write beta as ``1 + max(0, BF ln(...))`` (never below 1). The Fortran
-does ``max(0, 1 + BF ln(...))``, so beta *can* drop below 1 and hits 0 near
-13 ppm. This module uses the Fortran form.
-
-Annual-mean of a product is not the product of annual means. `summarize_from_fields`
-reconstructs per cell (and per time, if present) and reports the relative error
-against SIMBA's own `vegppl`.
+Fortran beta is max(0, 1 + BF ln(...)), not the docs' 1 + max(0, BF ln(...)).
+Annual-mean of a product is not the product of annual means.
 """
 
 import math
@@ -23,12 +20,16 @@ import numpy as np
 
 from atmos_presets import co2_ppmv_from_params, total_pressure_bar
 
-# SIMBA / landmod constants (mks).
+# SIMBA / landmod constants (mks). Keep in sync with plasim_patches/simba.f90.
 RLUE = 3.4e-10          # kg C / J  (epsilon_luemax)
 CO2_REF = 360.0         # ppmv
 CO2_COMP = 0.0          # ppmv
-CO2_SENS = 0.3          # beta factor BF
-T_CRIT_C = 5.0          # deg C
+CO2_SENS = 0.3          # Harvey 1989 beta factor
+T_CRIT_C = 5.0          # deg C, thaw ramp
+T_HOT_C = 35.0          # deg C, start of high-T decline
+T_KILL_C = 45.0         # deg C, GPP = 0
+CO2VEG_MAX = 1000.0     # ppmv plant-CO2 clamp
+BETA_MAX = 1.0          # Harvey β cap (Earth reference is 1 at 360 ppm)
 TMELT = 273.15          # K
 K_VEG = 0.5             # Beer's-law extinction
 CO2_ZERO = 1.0e-8       # Fortran branch: no CO2 => zbeta = 0
@@ -36,9 +37,14 @@ CO2_ZERO = 1.0e-8       # Fortran branch: no CO2 => zbeta = 0
 LIGHT_FACTORS = ("beta", "fT", "fPAR", "SWdn")
 
 
-def beta_co2(co2_ppmv):
-    """Carbon-dioxide multiplier from the Fortran, not the docs."""
-    co2 = float(co2_ppmv)
+def plant_co2_ppmv(co2_ppmv, co2veg_max=CO2VEG_MAX):
+    """CO2 seen by SIMBA photosynthesis: min(air mixing ratio, clamp)."""
+    return min(max(float(co2_ppmv), 0.0), float(co2veg_max))
+
+
+def beta_co2(co2_ppmv, co2veg_max=CO2VEG_MAX, beta_max=BETA_MAX):
+    """Harvey β from plant CO2. Floor 0, cap beta_max (1.0)."""
+    co2 = plant_co2_ppmv(co2_ppmv, co2veg_max=co2veg_max)
     if co2 < CO2_ZERO:
         return 0.0
     denom = CO2_REF - CO2_COMP
@@ -47,13 +53,21 @@ def beta_co2(co2_ppmv):
     argument = (co2 - CO2_COMP) / denom
     if argument <= 0.0:
         return 0.0
-    return float(max(0.0, 1.0 + CO2_SENS * math.log(argument)))
+    beta = max(0.0, 1.0 + CO2_SENS * math.log(argument))
+    if beta_max is not None:
+        beta = min(float(beta_max), beta)
+    return float(beta)
 
 
-def f_temperature(ts_k):
-    """Temperature limitation; `ts_k` in Kelvin, any shape."""
+def f_temperature(ts_k, t_hot=T_HOT_C, t_kill=T_KILL_C):
+    """Thaw 0–5 C, then linear decline from t_hot to 0 at t_kill. `ts_k` in K."""
     ts_c = np.asarray(ts_k, dtype=float) - TMELT
-    return np.clip(ts_c / T_CRIT_C, 0.0, 1.0)
+    zft = np.clip(ts_c / T_CRIT_C, 0.0, 1.0)
+    denom = float(t_kill) - float(t_hot)
+    if denom > 0.0:
+        hot_fac = np.clip((float(t_kill) - ts_c) / denom, 0.0, 1.0)
+        zft = np.where(ts_c > t_hot, zft * hot_fac, zft)
+    return zft
 
 
 def f_par(lai):
@@ -177,6 +191,7 @@ def base_record(
     mstar,
     au,
     atmos_type,
+    physics_mode="earth",
     crashed=False,
     gravity=None,
     radius=None,
@@ -188,6 +203,7 @@ def base_record(
     """JSON-safe skeleton for one diagnostic grid point (including crashes)."""
     return {
         "atmos": atmos_type,
+        "physics": physics_mode,
         "mass_ratio": _finite(mass_ratio),
         "mstar": _finite(mstar),
         "au": _finite(au),
@@ -203,6 +219,10 @@ def base_record(
         "pH2_bar": None,
         "pHe_bar": None,
         "co2_ppmv": None,
+        "co2veg_ppmv": None,
+        "mmw": None,
+        "gascon": None,
+        "akap_mix": None,
         "epsilon": RLUE,
         "beta": None,
         "gpp": None,
@@ -235,6 +255,7 @@ def summarize_from_fields(
     mstar,
     au,
     atmos_type,
+    physics_mode="earth",
     ssru=None,
     mrso=None,
     evap=None,
@@ -252,6 +273,7 @@ def summarize_from_fields(
         mstar=mstar,
         au=au,
         atmos_type=atmos_type,
+        physics_mode=physics_mode,
         crashed=crashed,
         gravity=gravity,
         radius=radius,
@@ -263,15 +285,26 @@ def summarize_from_fields(
     if crashed:
         return record
 
+    from atmos_presets import thermo_from_params
+
     p_tot = total_pressure_bar(params)
     co2_ppmv = co2_ppmv_from_params(params)
-    beta = beta_co2(co2_ppmv)
+    co2veg = plant_co2_ppmv(co2_ppmv)
+    beta = beta_co2(co2veg)
     record["p_total_bar"] = _finite(p_tot)
     record["pCO2_bar"] = _finite(params.get("pCO2"))
     record["pH2_bar"] = _finite(params.get("pH2"))
     record["pHe_bar"] = _finite(params.get("pHe"))
     record["co2_ppmv"] = _finite(co2_ppmv)
+    record["co2veg_ppmv"] = _finite(co2veg)
     record["beta"] = _finite(beta)
+    try:
+        thermo = thermo_from_params(params)
+        record["mmw"] = _finite(thermo["mmw"])
+        record["gascon"] = _finite(thermo["gascon"])
+        record["akap_mix"] = _finite(thermo["akap"])
+    except ValueError:
+        pass
 
     aligned = _align_fields({
         "gpp": gpp, "gppl": gppl, "gppw": gppw, "lai": lai, "ts": ts,

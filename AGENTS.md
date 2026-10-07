@@ -2,6 +2,15 @@
 
 Guidance for AI coding agents working in this repository.
 
+## Avoiding AI fluff
+
+Do not add AI fluff in code, comments, or docs. No filler comments that restate
+the next line. No "this function does X" text that only repeats the name. No
+emoji, hedging, marketing language, or unsolicited README polish. Comments
+exist for non-obvious constraints (crash retries, process-pool `chdir`, Fortran
+namelist order). Docs state commands, switches, and file names. Match the tone
+of nearby files.
+
 ## Repository overview
 
 Astrophysics/astrobiology research code (UGA, Dr. Cassandra Hall's group).
@@ -13,6 +22,10 @@ Astrophysics/astrobiology research code (UGA, Dr. Cassandra Hall's group).
   (pure Python + NumPy/AstroPy).
 - `vegetation_modeling/`, `Sapelo2/`, and the various top-level plotting scripts
   are scratch / earlier iterations of the `prod_job` pipeline.
+
+How to run production vs diagnostic grids, and how to switch atmosphere,
+physics, and mass: `RUN_INSTRUCTIONS.md`. Atmosphere physics and SIMBA:
+`ATMOSPHERES.md`.
 
 ## Environment
 

@@ -1,4 +1,5 @@
-from model_helpers_n2 import model_fun
+from model_helpers import model_fun
+from atmos_presets import resolve_atmos_type, resolve_physics_mode, regime_file_tag
 from time import time, strftime, gmtime
 
 # --- Run configuration -------------------------------------------------------
@@ -10,6 +11,19 @@ from time import time, strftime, gmtime
 # RUN_MODE = "mass_only"
 RUN_MODE = "normal"
 
+# Composition and physics. See ATMOSPHERES.md.
+#   n2 / earth, co2 / venus (~1 bar Venus mix), mars (~1 bar Mars mix),
+#   evolved, venus_surface (92 bar), mars_surface (6.36 mbar)
+# ATMOS_PARAMS overlays individual partial pressures on the preset.
+ATMOS_TYPE = "n2"
+ATMOS_PARAMS = None
+# ATMOS_PARAMS = {"pCO2": 0.965, "pN2": 0.035}
+
+# earth: ExoPlaSim gascon, akap 0.286
+# mars:  p_mars.f90 (calendar/ozone/soil/orbit too)
+# other: gascon and akap from the mix
+PHYSICS_MODE = "earth"
+
 # Fixed star/orbit used for the Earth reference and for "mass_only" runs.
 REFERENCE_MSTAR = 1.0   # solar masses
 REFERENCE_AU = 1.0      # AU
@@ -20,14 +34,23 @@ MASS_RATIOS = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2]
 
 def run_earth_reference():
     """Always-run baseline: a 1 Earth-mass planet at 1 AU around a 1 solar-mass
-    star, stored on its own so every run has a 'normal' point to compare to."""
-    print("Running Earth reference (1 Mearth, 1 AU, 1 Msun)...")
+    star with Earth-like air, stored on its own so every run has a 'normal'
+    point to compare to."""
+    print("Running Earth reference (1 Mearth, 1 AU, 1 Msun, n2 / earth physics)...")
     model_fun(1.0, resolution="T21",
               points=[(REFERENCE_MSTAR, REFERENCE_AU)],
-              output_file="earth_reference.json")
+              output_file="earth_reference.json",
+              atmos_type="n2",
+              physics_mode="earth")
 
 
 def main():
+    atmos_type = resolve_atmos_type(ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(PHYSICS_MODE)
+    file_tag = regime_file_tag(RUN_MODE, atmos_type, physics_mode)
+    print(f"ATMOS_TYPE={atmos_type}  PHYSICS_MODE={physics_mode}  "
+          f"ATMOS_PARAMS={ATMOS_PARAMS}  file_tag={file_tag}")
+
     # (A) Compute the Earth reference baseline first, regardless of RUN_MODE.
     run_earth_reference()
 
@@ -40,9 +63,15 @@ def main():
             # (B) One planet of mass m at 1 AU around a 1 Msun star.
             model_fun(m, resolution="T21",
                       points=[(REFERENCE_MSTAR, REFERENCE_AU)],
-                      file_tag="_massonly2")
+                      file_tag=file_tag,
+                      atmos_type=atmos_type,
+                      physics_mode=physics_mode,
+                      atmos_params=ATMOS_PARAMS)
         else:
-            model_fun(m, resolution="T21", file_tag="_normal_n2")
+            model_fun(m, resolution="T21", file_tag=file_tag,
+                      atmos_type=atmos_type,
+                      physics_mode=physics_mode,
+                      atmos_params=ATMOS_PARAMS)
 
         end_time = time()
         elapsed_seconds = end_time - start_time
