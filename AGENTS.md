@@ -79,10 +79,10 @@ runtime, is committed, so no copy step is needed.)
 `run_model.py` has a `RUN_MODE` switch at the top:
 
 - `"normal"` — the full sweep over stellar masses (`MSTARS`) and each star's
-  habitable-zone distances. Output: `16cpus_test_<mass>.json`.
+  habitable-zone distances. Output: `16cpus_test_<mass>_normal_<atmos>.json`
+  (plus `_<physics>` when physics is not earth).
 - `"mass_only"` — vary planet mass only; every planet sits at 1 AU around a
-  1 solar-mass star. Output: `16cpus_test_<mass>_massonly.json` (the `_massonly`
-  tag distinguishes it from a normal run).
+  1 solar-mass star. Output: `16cpus_test_<mass>_massonly_<atmos>.json`.
 
 Regardless of `RUN_MODE`, every run first computes an **Earth reference**
 (1 Earth-mass planet at 1 AU around a 1 solar-mass star) and stores it in
@@ -90,10 +90,11 @@ Regardless of `RUN_MODE`, every run first computes an **Earth reference**
 
 ### Plotting
 
-`plot_veg_by_params.py` (run from `prod_job/` after a normal-mode sweep) reads
-the `16cpus_test_<mass>.json` files and writes bar-grid PNGs of normalized GPP
-vs planet mass for each (M*, AU) cell. It uses the shared `paper.mplstyle`
-style and treats crashed (`null`) points as zero.
+`plot_veg_by_params.py` (run from `prod_job/`) discovers `16cpus_test_*.json`
+files, groups them by run mode / mix / physics, and writes
+`gpp_<mode>_<atmos>_<physics>[_scale].png`. Crashed (`null`) points plot as
+zero. Use `--atmos` / `--mode` / `--physics` to plot one regime, or `--list`
+to show what is on disk. See `RUN_INSTRUCTIONS.md`.
 
 ## Testing
 

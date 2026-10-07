@@ -75,9 +75,11 @@ Production default in `run_model.py`: `ATMOS_TYPE = "n2"`, `PHYSICS_MODE = "eart
 
 So two regimes do not overwrite the same JSON:
 
-- `n2` + earth physics keeps the old names `_normal_n2` / `_massonly2`
-- anything else: `_normal_<atmos>` or `_normal_<atmos>_<physics>`
-  (and `_massonly_…` in mass-only mode)
+- `_normal_<atmos>` or `_massonly_<atmos>` when physics is earth
+- `_normal_<atmos>_<physics>` / `_massonly_<atmos>_<physics>` otherwise
+
+`plot_veg_by_params.py` still reads the old `_massonly2` / `_massonly`
+names as `n2` + earth. Non-T21 files get `_Txx` before `.json`.
 
 ## SIMBA
 

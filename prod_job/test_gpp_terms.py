@@ -19,6 +19,7 @@ import numpy as np
 import atmos_presets as ap
 import gpp_terms as gt
 import plot_gpp_diagnostics as plotter
+import plot_veg_by_params as vegplot
 import run_gpp_diagnostics as runner
 
 
@@ -277,9 +278,9 @@ class TestThermoAndPhysics(unittest.TestCase):
         self.assertTrue(kwargs["mars"])
         self.assertNotIn("gascon", params)
 
-    def test_default_file_tags_match_historical_names(self):
+    def test_file_tags_are_uniform(self):
         self.assertEqual(ap.regime_file_tag("normal", "n2", "earth"), "_normal_n2")
-        self.assertEqual(ap.regime_file_tag("mass_only", "earth", "earth"), "_massonly2")
+        self.assertEqual(ap.regime_file_tag("mass_only", "earth", "earth"), "_massonly_n2")
         self.assertEqual(ap.regime_file_tag("mass_only", "venus", "other"), "_massonly_co2_other")
         self.assertEqual(ap.regime_file_tag("mass_only", "mars", "other"), "_massonly_mars_other")
         self.assertEqual(
@@ -383,6 +384,138 @@ class TestPlotter(unittest.TestCase):
                 path = os.path.join(outdir, name)
                 self.assertTrue(os.path.isfile(path), name)
                 self.assertGreater(os.path.getsize(path), 1000)
+
+
+class TestSweepFilenames(unittest.TestCase):
+    def test_roundtrip_current_tags(self):
+        for run_mode in ("normal", "mass_only"):
+            for atmos in ap.PRESETS:
+                for physics in ap.PHYSICS_MODES:
+                    name = ap.sweep_json_name(
+                        1.0, run_mode=run_mode, atmos_type=atmos, physics_mode=physics,
+                    )
+                    parsed = ap.parse_sweep_json_name(name)
+                    self.assertEqual(parsed["mass"], 1.0, name)
+                    self.assertEqual(parsed["run_mode"], run_mode, name)
+                    self.assertEqual(parsed["atmos"], atmos, name)
+                    self.assertEqual(parsed["physics"], physics, name)
+                    self.assertEqual(parsed["resolution"], "T21", name)
+
+    def test_mass_tokens(self):
+        self.assertEqual(ap.mass_file_token(0.1), "01")
+        self.assertEqual(ap.mass_file_token(0.25), "025")
+        self.assertEqual(ap.mass_file_token(1.0), "10")
+        self.assertEqual(ap.mass_file_token(2), "2")
+        self.assertEqual(ap.parse_sweep_json_name("16cpus_test_01_normal_n2.json")["mass"], 0.1)
+        self.assertEqual(ap.parse_sweep_json_name("16cpus_test_025_normal_n2.json")["mass"], 0.25)
+        self.assertEqual(ap.parse_sweep_json_name("16cpus_test_2_normal_n2.json")["mass"], 2.0)
+
+    def test_legacy_massonly_names(self):
+        for name in ("16cpus_test_10_massonly2.json", "16cpus_test_10_massonly.json"):
+            parsed = ap.parse_sweep_json_name(name)
+            self.assertEqual(parsed["run_mode"], "mass_only")
+            self.assertEqual(parsed["atmos"], "n2")
+            self.assertEqual(parsed["physics"], "earth")
+            self.assertEqual(parsed["mass"], 1.0)
+
+    def test_t42_suffix_has_underscore(self):
+        name = ap.sweep_json_name(
+            1.5, run_mode="normal", atmos_type="co2", physics_mode="other",
+            resolution="T42",
+        )
+        self.assertEqual(name, "16cpus_test_15_normal_co2_other_T42.json")
+        parsed = ap.parse_sweep_json_name(name)
+        self.assertEqual(parsed["resolution"], "T42")
+        glued = ap.parse_sweep_json_name("16cpus_test_15_normal_co2_otherT42.json")
+        self.assertEqual(glued["resolution"], "T42")
+        self.assertEqual(glued["atmos"], "co2")
+
+    def test_venus_surface_not_confused_with_physics(self):
+        parsed = ap.parse_sweep_json_name(
+            "16cpus_test_10_normal_venus_surface_other.json"
+        )
+        self.assertEqual(parsed["atmos"], "venus_surface")
+        self.assertEqual(parsed["physics"], "other")
+
+
+class TestPlotVegByParams(unittest.TestCase):
+    def _write_json(self, path, payload):
+        with open(path, "w") as handle:
+            json.dump(payload, handle)
+
+    def test_discovers_legacy_and_current_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_json(
+                os.path.join(tmp, "16cpus_test_10_massonly2.json"),
+                {"1.0": {"1.0": [1.0, 8.0, 255.0, 1367.0]}},
+            )
+            self._write_json(
+                os.path.join(tmp, ap.sweep_json_name(
+                    1.5, run_mode="mass_only", atmos_type="n2", physics_mode="earth",
+                )),
+                {"1.0": {"1.0": [1.0, 9.0, 255.0, 1367.0]}},
+            )
+            self._write_json(
+                os.path.join(tmp, ap.sweep_json_name(
+                    1.0, run_mode="normal", atmos_type="co2", physics_mode="other",
+                )),
+                {
+                    "0.8": {
+                        "0.9": [1.0, 3.0, 255.0, 1367.0],
+                        "1.0": [1.0, 4.0, 255.0, 1367.0],
+                    },
+                    "1.0": {
+                        "0.95": [1.0, 5.0, 255.0, 1367.0],
+                        "1.05": [1.0, 6.0, 255.0, 1367.0],
+                    },
+                },
+            )
+            groups = vegplot.discover(tmp)
+            self.assertEqual(len(groups[("mass_only", "n2", "earth", "T21")]), 2)
+            self.assertEqual(len(groups[("normal", "co2", "other", "T21")]), 1)
+
+    def test_writes_named_pngs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            earth = {"1.0": {"1.0": [1.0, 10.0, 255.0, 1367.0]}}
+            self._write_json(os.path.join(tmp, ap.EARTH_REFERENCE_JSON), earth)
+            self._write_json(
+                os.path.join(tmp, "16cpus_test_10_massonly2.json"),
+                {"1.0": {"1.0": [1.0, 8.0, 255.0, 1367.0]}},
+            )
+            self._write_json(
+                os.path.join(tmp, ap.sweep_json_name(
+                    1.5, run_mode="mass_only", atmos_type="n2", physics_mode="earth",
+                )),
+                {"1.0": {"1.0": [1.0, 9.0, 255.0, 1367.0]}},
+            )
+            self._write_json(
+                os.path.join(tmp, ap.sweep_json_name(
+                    1.0, run_mode="normal", atmos_type="co2", physics_mode="other",
+                )),
+                {
+                    "0.8": {"1.0": [1.0, 4.0, 255.0, 1367.0]},
+                    "1.0": {"1.0": [1.0, 5.0, 255.0, 1367.0]},
+                },
+            )
+            rc = vegplot.main(["--dir", tmp, "--outdir", tmp])
+            self.assertEqual(rc, 0)
+            expected = [
+                "gpp_massonly_n2_earth.png",
+                "gpp_normal_co2_other_shared_linear.png",
+                "gpp_normal_co2_other_shared_log.png",
+                "gpp_normal_co2_other_indep_linear.png",
+            ]
+            for name in expected:
+                path = os.path.join(tmp, name)
+                self.assertTrue(os.path.isfile(path), name)
+                self.assertGreater(os.path.getsize(path), 1000)
+
+    def test_list_and_empty_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc = vegplot.main(["--dir", tmp, "--list"])
+            self.assertEqual(rc, 0)
+            rc = vegplot.main(["--dir", tmp])
+            self.assertEqual(rc, 1)
 
 
 class TestSimbaPatch(unittest.TestCase):
