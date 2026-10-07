@@ -4,6 +4,9 @@ Composition (`atmos_type`) and thermodynamics (`physics_mode`) are separate.
 See ATMOSPHERES.md.
 """
 
+import os
+import re
+
 GAS_KEYS = (
     "pH2", "pHe", "pN2", "pO2", "pCO2", "pAr", "pNe", "pKr", "pH2O", "pCH4",
 )
@@ -254,13 +257,151 @@ def apply_physics_mode(local_params, physics_mode):
 def regime_file_tag(run_mode, atmos_type, physics_mode):
     """Filename tag so composition/physics combos do not overwrite each other.
 
-    n2 + earth physics keeps the old names `_massonly2` / `_normal_n2`.
+    Always `_<mode>_<atmos>` or `_<mode>_<atmos>_<physics>` when physics is
+    not earth. `_massonly2` is a legacy alias the parser still accepts.
     """
     atmos = resolve_atmos_type(atmos_type)
     physics = resolve_physics_mode(physics_mode)
     mode_tag = "_massonly" if run_mode == "mass_only" else "_normal"
-    if atmos == "n2" and physics == "earth":
-        return "_massonly2" if run_mode == "mass_only" else "_normal_n2"
     extra = f"_{atmos}" if physics == "earth" else f"_{atmos}_{physics}"
     return mode_tag + extra
+
+
+SWEEP_JSON_PREFIX = "16cpus_test_"
+EARTH_REFERENCE_JSON = "earth_reference.json"
+# Tokens come from str(mass).replace(".", ""), so 1.0 → "10" and 2 → "2".
+SWEEP_MASSES = (0.1, 0.15, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2, 3, 4, 5)
+_LEGACY_TAGS = {
+    "_massonly2": ("mass_only", "n2", "earth"),
+    "_massonly": ("mass_only", "n2", "earth"),
+}
+_RES_AT_END = re.compile(r"_?(T\d+)$")
+
+
+def mass_file_token(mass):
+    """Mass fragment in sweep JSON names. Same formula as run_model.py."""
+    return str(mass).replace(".", "")
+
+
+def _mass_token_map(extra_masses=()):
+    mapping = {}
+    for mass in SWEEP_MASSES + tuple(extra_masses):
+        mapping[mass_file_token(mass)] = float(mass)
+    return mapping
+
+
+def _mass_from_unknown_token(token):
+    if token.startswith("0") and len(token) > 1:
+        return float(token[0] + "." + token[1:])
+    if len(token) >= 2:
+        return float(token[0] + "." + token[1:])
+    return float(token)
+
+
+def parse_regime_tag(tag):
+    """Split `_normal_n2` / `_massonly_co2_other` (and legacy `_massonly2`)."""
+    if not tag:
+        return None
+    if tag in _LEGACY_TAGS:
+        run_mode, atmos, physics = _LEGACY_TAGS[tag]
+        return {"run_mode": run_mode, "atmos": atmos, "physics": physics}
+    if tag.startswith("_massonly"):
+        run_mode = "mass_only"
+        rest = tag[len("_massonly"):]
+    elif tag.startswith("_normal"):
+        run_mode = "normal"
+        rest = tag[len("_normal"):]
+    else:
+        return None
+    if not rest.startswith("_"):
+        return None
+    body = rest[1:]
+    physics = "earth"
+    atmos_body = body
+    for mode in PHYSICS_MODES:
+        suffix = "_" + mode
+        if body.endswith(suffix):
+            leftover = body[:-len(suffix)]
+            try:
+                resolve_atmos_type(leftover)
+            except ValueError:
+                continue
+            atmos_body = leftover
+            physics = mode
+            break
+    try:
+        atmos = resolve_atmos_type(atmos_body)
+    except ValueError:
+        return None
+    return {"run_mode": run_mode, "atmos": atmos, "physics": physics}
+
+
+def resolution_suffix(resolution):
+    if not resolution or resolution == "T21":
+        return ""
+    return f"_{resolution}"
+
+
+def sweep_json_name(mass, file_tag=None, resolution="T21",
+                    run_mode=None, atmos_type=None, physics_mode=None):
+    """`16cpus_test_<mass><tag>[_Txx].json`. T21 omits the resolution piece."""
+    if file_tag is None:
+        file_tag = regime_file_tag(run_mode, atmos_type, physics_mode)
+    return (
+        f"{SWEEP_JSON_PREFIX}{mass_file_token(mass)}"
+        f"{file_tag}{resolution_suffix(resolution)}.json"
+    )
+
+
+def parse_sweep_json_name(name, extra_masses=()):
+    """Parse a sweep JSON basename. None if it is not one."""
+    base = os.path.basename(name)
+    if not base.startswith(SWEEP_JSON_PREFIX) or not base.endswith(".json"):
+        return None
+    stem = base[len(SWEEP_JSON_PREFIX):-len(".json")]
+    token_map = _mass_token_map(extra_masses)
+    mass = None
+    rest = None
+    for token in sorted(token_map, key=len, reverse=True):
+        if stem.startswith(token) and stem[len(token):].startswith("_"):
+            mass = token_map[token]
+            rest = stem[len(token):]
+            break
+    if rest is None:
+        matched = re.match(r"(\d+)(_massonly2|_massonly|_normal)(.*)$", stem)
+        if not matched:
+            return None
+        token, mode_part, leftover = matched.group(1), matched.group(2), matched.group(3)
+        mass = token_map.get(token, _mass_from_unknown_token(token))
+        rest = mode_part + leftover
+    resolution = "T21"
+    res_match = _RES_AT_END.search(rest)
+    if res_match:
+        resolution = res_match.group(1)
+        rest = rest[:res_match.start()]
+    parsed = parse_regime_tag(rest)
+    if parsed is None:
+        return None
+    parsed.update({
+        "mass": mass,
+        "resolution": resolution,
+        "file_tag": rest,
+        "name": base,
+    })
+    return parsed
+
+
+def iter_sweep_json(directory, extra_masses=()):
+    """Yield parse dicts (with `path`) for sweep JSON files in directory."""
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in sorted(names):
+        parsed = parse_sweep_json_name(name, extra_masses=extra_masses)
+        if parsed is None:
+            continue
+        parsed = dict(parsed)
+        parsed["path"] = os.path.join(directory, name)
+        yield parsed
 

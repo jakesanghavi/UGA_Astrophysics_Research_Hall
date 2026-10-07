@@ -11,6 +11,7 @@ from atmos_presets import (
     co2_ppmv_from_params,
     resolve_atmos_type,
     resolve_physics_mode,
+    sweep_json_name,
     thermo_from_params,
 )
 from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
@@ -625,7 +626,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     points        : explicit list of (mstar, au) tuples to evaluate. If None
                     (default), sweep every star in MSTARS across its habitable-zone
                     percentiles (the original behavior).
-    file_tag      : inserted into the default output filename (e.g. "_massonly")
+    file_tag      : inserted into the default output filename (e.g. "_massonly_n2")
                     so alternate configurations are easy to tell apart.
     output_file   : full override of the output filename (takes precedence over
                     file_tag), used e.g. for the Earth reference baseline.
@@ -636,10 +637,8 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
 
-    # Change name based on resolution
-    res_suffix = "" if resolution == 'T21' else resolution
     if output_file is None:
-        output_file = f"16cpus_test_{str(mass_ratio).replace('.', '')}{file_tag}{res_suffix}.json"
+        output_file = sweep_json_name(mass_ratio, file_tag=file_tag, resolution=resolution)
 
     if os.path.exists(output_file):
         with open(output_file, "r") as f:
