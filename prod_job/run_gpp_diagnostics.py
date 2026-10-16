@@ -231,15 +231,54 @@ def parse_args(argv=None):
         action="store_true",
         help="recompute points even if they already exist and did not crash",
     )
+    parser.add_argument(
+        "--preset-only",
+        action="store_true",
+        help="write mix/column knobs without launching ExoPlaSim (crashed stubs)",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        default=None,
+        help="PNG directory (default: <json stem>_plots, e.g. gpp_diag_plots)",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="write JSON only; do not run plot_gpp_diagnostics.py",
+    )
     return parser.parse_args(argv)
 
 
+def plot_output_dir(json_path, plot_dir=None):
+    if plot_dir:
+        return plot_dir
+    stem, _ = os.path.splitext(os.path.abspath(json_path))
+    return stem + "_plots"
+
+
+def plot_bundle(args):
+    """Draw PNGs next to the JSON. JSON is the data; plots are a second step."""
+    if args.no_plot:
+        return
+    import plot_gpp_diagnostics as plotter
+
+    if not os.path.isfile(args.output):
+        print(f"skip plots: {args.output} not written")
+        return
+    outdir = plot_output_dir(args.output, args.plot_dir)
+    plotter.main(["--input", args.output, "--outdir", outdir])
+    print(f"Plots in {outdir}")
+
+
 def print_plan(tasks, args):
-    print(f"GPP diagnostic: {len(tasks)} ExoPlaSim run(s), {args.years} year(s) each")
+    if args.preset_only:
+        print(f"GPP diagnostic: {len(tasks)} preset-only record(s), no ExoPlaSim")
+    else:
+        print(f"GPP diagnostic: {len(tasks)} ExoPlaSim run(s), {args.years} year(s) each")
     print(f"  axis={args.axis}  atmos={args.atmos}  physics={args.physics}")
     print("  (atmos, physics, mass, M*, AU)")
     for atmos, mass, mstar, au, physics in tasks:
-        print(f"    {atmos:8s}  {physics:5s}  {mass:g}  {mstar:g}  {au:g}")
+        print(f"    {atmos:16s}  {physics:5s}  {mass:g}  {mstar:g}  {au:g}")
     print(f"  output: {args.output}")
     print("This is a diagnostic grid, not the production sweep.")
 
@@ -326,13 +365,38 @@ def run_tasks(tasks, args):
                 print(f"Error! ({atmos}, {physics}, {mass}, {mstar}, {au}): {exc}")
 
 
+def write_preset_only(tasks, args):
+    """JSON records with P / plant CO2 / β / column knobs, no GCM year."""
+    from gpp_terms import preset_only_record
+
+    records = []
+    for atmos, mass, mstar, au, physics in tasks:
+        rec = preset_only_record(
+            mass_ratio=mass, mstar=mstar, au=au,
+            atmos_type=atmos, physics_mode=physics,
+        )
+        records.append(rec)
+        print(
+            f"  {atmos:16s} physics={physics:5s} M={mass:g} "
+            f"P={rec.get('p_total_bar')} bar  beta={rec.get('beta')}  "
+            f"modeltop={rec.get('modeltop')}"
+        )
+    save_bundle(args.output, args, records)
+    print(f"Wrote {len(records)} preset-only record(s) to {args.output}")
+    plot_bundle(args)
+
+
 def main(argv=None):
     args = parse_args(argv)
     tasks = build_tasks(args)
     print_plan(tasks, args)
     if args.dry_run:
         return 0
+    if args.preset_only:
+        write_preset_only(tasks, args)
+        return 0
     run_tasks(tasks, args)
+    plot_bundle(args)
     return 0
 
 
