@@ -3,6 +3,9 @@
 
     python plot_gpp_diagnostics.py
     python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
+
+Writes light-factor panels, combined light/water/min rates, and a water
+budget (prescribed P and plant CO2 vs leftover in vegppw).
 """
 
 from __future__ import annotations
@@ -17,7 +20,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from atmos_presets import PRESETS
-from gpp_terms import LIGHT_FACTORS, attribution_vs_reference
+from gpp_terms import (
+    LIGHT_FACTORS,
+    RATE_FIELDS,
+    WATER_BUDGET_TERMS,
+    attribution_vs_reference,
+    water_budget_vs_reference,
+)
 
 _STYLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper.mplstyle")
 if os.path.exists(_STYLE):
@@ -36,6 +45,23 @@ FACTOR_PANELS = [
     ("SWdn", r"$SW\downarrow$ [W m$^{-2}$]"),
     ("frac_light_limited", "fraction light-limited"),
 ]
+
+RATE_STYLES = (
+    ("gppl", r"$GPP_{light}$", dict(ls="--", marker="o", color="steelblue")),
+    ("gppw", r"$GPP_{water}$", dict(ls=":", marker="s", color="darkorange")),
+    ("gpp", r"$GPP=\min$", dict(ls="-", marker="D", color="black", lw=1.8)),
+)
+
+WATER_BUDGET_LABELS = {
+    "p_total_bar": r"$P$",
+    "co2veg_ppmv": r"plant $CO_2$",
+    "gppw_climate": "climate leftover",
+}
+WATER_BUDGET_COLORS = {
+    "p_total_bar": "slategray",
+    "co2veg_ppmv": "goldenrod",
+    "gppw_climate": "seagreen",
+}
 
 
 def load_bundle(path):
@@ -267,6 +293,146 @@ def plot_attribution(records, reference, axis, outdir):
     return path
 
 
+def plot_rates_by_atmos(by_atmos, axis, outdir):
+    """GPP_light, GPP_water, and min on one panel per atmosphere."""
+    atmos_names = atmos_order(by_atmos)
+    ncols = max(len(atmos_names), 1)
+    fig, axes = plt.subplots(
+        1, ncols,
+        figsize=(max(4.2, 3.8 * ncols), 3.6),
+        sharey=False, squeeze=False,
+    )
+    for col, atmos in enumerate(atmos_names):
+        ax = axes[0, col]
+        rows = by_atmos[atmos]
+        for field, title, style in RATE_STYLES:
+            xs, ys = xy(rows, axis, field)
+            if xs.size:
+                ax.plot(xs, ys, label=title, **style)
+        ax.set_title(atmos_label(atmos))
+        ax.set_xlabel(axis_label(axis))
+        ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+        if col == 0:
+            ax.set_ylabel(r"GPP [kg C m$^{-2}$ s$^{-1}$]")
+            ax.legend(frameon=False, fontsize=8)
+    fig.suptitle(r"Light-limited, water-limited, and $GPP=\min$ (land mean)")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    path = os.path.join(outdir, "gpp_rates_by_atmos.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_rate_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
+    """Grouped bars of light / water / min GPP by atmosphere at selected masses."""
+    present = sorted({
+        rec["mass_ratio"]
+        for rows in by_atmos.values()
+        for rec in rows
+        if (not rec.get("crashed")) and rec.get("gpp") is not None
+    })
+    masses = [m for m in masses if m in present] or present
+    if not masses:
+        return None
+
+    def rate_at(atmos, mass, field):
+        for rec in by_atmos.get(atmos, []):
+            if rec.get("crashed") or rec.get(field) is None:
+                continue
+            if rec.get("mass_ratio") == mass:
+                return rec[field]
+        return None
+
+    atmos_names = atmos_order(by_atmos)
+    if not atmos_names:
+        return None
+    nmass = len(masses)
+    fig, axes = plt.subplots(
+        1, nmass, figsize=(max(5.0, 3.2 * nmass), 3.8), sharey=True, squeeze=False,
+    )
+    x = np.arange(len(atmos_names), dtype=float)
+    width = 0.8 / len(RATE_FIELDS)
+    for col, mass in enumerate(masses):
+        ax = axes[0, col]
+        positive = []
+        for i, (field, title, style) in enumerate(RATE_STYLES):
+            ys = [rate_at(atmos, mass, field) for atmos in atmos_names]
+            ys = [float("nan") if v is None else v for v in ys]
+            positive.extend(v for v in ys if v == v and v > 0)
+            offset = (i - 0.5 * (len(RATE_FIELDS) - 1)) * width
+            ax.bar(
+                x + offset, ys, width, label=title,
+                color=style["color"], edgecolor="0.2", linewidth=0.4,
+            )
+        ax.set_xticks(x)
+        ax.set_xticklabels([atmos_label(a) for a in atmos_names], rotation=30, ha="right")
+        ax.set_title(rf"${mass:g}\,M_\oplus$")
+        if positive and max(positive) / min(positive) > 50:
+            ax.set_yscale("log")
+        else:
+            ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+        if col == 0:
+            ax.set_ylabel(r"GPP [kg C m$^{-2}$ s$^{-1}$]")
+            ax.legend(frameon=False, fontsize=8)
+        ax.margins(y=0.14)
+    fig.suptitle(r"Light, water, and $GPP=\min$ by atmosphere")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    path = os.path.join(outdir, "gpp_rate_regime_bars.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_water_attribution(records, reference, axis, outdir):
+    """Stacked Δln(GPP_water) = Δln P + Δln plant CO2 + climate leftover."""
+    if reference is None:
+        return None
+    live = [
+        rec for rec in records
+        if not rec.get("crashed") and rec.get("gppw") is not None
+    ]
+    if not live:
+        return None
+    budgets = [water_budget_vs_reference(rec, reference) for rec in live]
+    if all(b["dln"][name] is None for b in budgets for name in WATER_BUDGET_TERMS):
+        return None
+    fig, ax = plt.subplots(figsize=(max(6.0, 0.7 * len(live) + 2), 3.8))
+    x = np.arange(len(live))
+    bottoms_pos = np.zeros(len(live))
+    bottoms_neg = np.zeros(len(live))
+    for name in WATER_BUDGET_TERMS:
+        values = np.array([b["dln"][name] or 0.0 for b in budgets])
+        pos = np.where(values >= 0.0, values, 0.0)
+        neg = np.where(values < 0.0, values, 0.0)
+        ax.bar(x, pos, bottom=bottoms_pos, color=WATER_BUDGET_COLORS[name],
+               label=WATER_BUDGET_LABELS[name])
+        ax.bar(x, neg, bottom=bottoms_neg, color=WATER_BUDGET_COLORS[name])
+        bottoms_pos += pos
+        bottoms_neg += neg
+    labels = [
+        "{a}/{p} M={m:g}".format(
+            a=rec["atmos"], p=rec.get("physics") or "earth", m=rec[axis_key(axis)]
+        )
+        for rec in live
+    ]
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=90)
+    ax.axhline(0.0, color="0.3", lw=0.8)
+    ax.set_ylabel(r"$\Delta \ln GPP_{water}$ vs reference")
+    ax.set_title(
+        "Water budget vs "
+        f"{reference['atmos']} M={reference['mass_ratio']:g}, "
+        f"M*={reference['mstar']:g}, AU={reference['au']:g}"
+        "\n(P and plant CO2 from config; leftover is ET/VPD/cover)"
+    )
+    ax.legend()
+    fig.tight_layout()
+    path = os.path.join(outdir, "gpp_water_dln_attribution.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def plot_gpp_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
     """Grouped bars of land-mean GPP by atmosphere at selected planet masses.
 
@@ -352,12 +518,16 @@ def main(argv=None):
     if args.only_bars:
         written = [plot_gpp_regime_bars(by_atmos, args.outdir)]
     else:
+        ref = pick_reference(records)
         written = [
             plot_factors(by_atmos, axis, args.outdir),
             plot_overlay(by_atmos, axis, args.outdir),
+            plot_rates_by_atmos(by_atmos, axis, args.outdir),
+            plot_rate_regime_bars(by_atmos, args.outdir),
             plot_gpp_ratio(by_atmos, axis, args.outdir),
             plot_gpp_regime_bars(by_atmos, args.outdir),
-            plot_attribution(records, pick_reference(records), axis, args.outdir),
+            plot_attribution(records, ref, axis, args.outdir),
+            plot_water_attribution(records, ref, axis, args.outdir),
         ]
     for path in written:
         if path:

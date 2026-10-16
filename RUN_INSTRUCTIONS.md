@@ -163,6 +163,10 @@ python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
 python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots --only-bars
 ```
 
+`plot_gpp_diagnostics.py` also writes `gpp_rates_by_atmos.png` and
+`gpp_rate_regime_bars.png` (light, water, and min) and
+`gpp_water_dln_attribution.png` (`P` and plant CO2 vs leftover in `vegppw`).
+
 Other useful flags: `--axis mass|au|mstar`, `--hz` (three HZ distances of
 `--mstar`), `--years`, `--force` (recompute even if the JSON already has the
 point). `--physics` is one mode for every point, or a per-atmos map.

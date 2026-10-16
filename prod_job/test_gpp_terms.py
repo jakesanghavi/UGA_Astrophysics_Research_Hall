@@ -165,6 +165,48 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(attr["dominant_light_term"], "beta")
         self.assertGreater(attr["dln"]["beta"], 0.0)
         self.assertLess(attr["dln"]["beta"], math.log(2.0))
+        self.assertIsNone(attr["dominant_water_term"])
+
+    def test_water_budget_splits_p_and_plant_co2(self):
+        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
+        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+        vs_p = ap.total_pressure_bar(ap.VENUS_SURFACE_GASES)
+        vs_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.VENUS_SURFACE_GASES))
+        climate = 2.0
+        ref = {
+            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
+        }
+        rec = {
+            "p_total_bar": vs_p,
+            "co2veg_ppmv": vs_co2,
+            "gppw": (vs_p / n2_p) * (vs_co2 / n2_co2) * climate,
+            "crashed": False,
+        }
+        budget = gt.water_budget_vs_reference(rec, ref)
+        self.assertAlmostEqual(budget["dln"]["p_total_bar"], math.log(vs_p / n2_p), places=12)
+        self.assertAlmostEqual(
+            budget["dln"]["co2veg_ppmv"], math.log(vs_co2 / n2_co2), places=12,
+        )
+        self.assertAlmostEqual(budget["dln"]["gppw_climate"], math.log(climate), places=12)
+        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
+
+    def test_water_budget_plant_co2_when_p_fixed(self):
+        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
+        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+        co2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.VENUSLIKE_GASES))
+        ref = {
+            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
+        }
+        rec = {
+            "p_total_bar": n2_p,
+            "co2veg_ppmv": co2_co2,
+            "gppw": co2_co2 / n2_co2,
+            "crashed": False,
+        }
+        budget = gt.water_budget_vs_reference(rec, ref)
+        self.assertEqual(budget["dln"]["p_total_bar"], 0.0)
+        self.assertAlmostEqual(budget["dln"]["gppw_climate"], 0.0, places=12)
+        self.assertEqual(budget["dominant_water_term"], "co2veg_ppmv")
 
 
 class TestPresets(unittest.TestCase):
@@ -472,27 +514,38 @@ class TestDiagnosticCli(unittest.TestCase):
 class TestPlotter(unittest.TestCase):
     def test_plotter_writes_pngs_from_schema(self):
         records = []
+        gases = {
+            "n2": ap.EARTHLIKE_GASES,
+            "co2": ap.VENUSLIKE_GASES,
+            "evolved": ap.EARTHLIKE_GASES,
+        }
         for atmos, beta_scale in (("n2", 1.0), ("co2", 3.2), ("evolved", 0.9)):
+            p_tot = ap.total_pressure_bar(gases[atmos])
+            co2veg = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(gases[atmos]))
             for mass, sw in ((0.25, 180.0), (1.0, 150.0), (2.0, 120.0)):
                 fT = 1.0
                 fPAR = 0.4 + 0.1 * mass
                 gppl = 3.4e-10 * beta_scale * fT * fPAR * sw
+                water_scale = 0.4 if atmos == "co2" else 2.0
+                gppw = gppl * water_scale
                 records.append({
                     "atmos": atmos,
                     "mass_ratio": mass,
                     "mstar": 1.0,
                     "au": 1.0,
                     "crashed": False,
-                    "gpp": gppl,
+                    "gpp": min(gppl, gppw),
                     "gppl": gppl,
-                    "gppw": gppl * 2.0,
+                    "gppw": gppw,
                     "beta": beta_scale,
                     "fT": fT,
                     "fPAR": fPAR,
                     "SWdn": sw,
-                    "frac_light_limited": 1.0,
+                    "frac_light_limited": 1.0 if water_scale > 1.0 else 0.0,
                     "lai": 1.2,
                     "ts_C": 12.0,
+                    "p_total_bar": p_tot,
+                    "co2veg_ppmv": co2veg,
                 })
         with tempfile.TemporaryDirectory() as tmp:
             json_path = os.path.join(tmp, "gpp_diag.json")
@@ -503,9 +556,12 @@ class TestPlotter(unittest.TestCase):
             for name in (
                 "gpp_terms_by_atmos.png",
                 "gpp_terms_overlay.png",
+                "gpp_rates_by_atmos.png",
+                "gpp_rate_regime_bars.png",
                 "gpp_ratio_vs_earth.png",
                 "gpp_regime_bars.png",
                 "gpp_dln_attribution.png",
+                "gpp_water_dln_attribution.png",
             ):
                 path = os.path.join(outdir, name)
                 self.assertTrue(os.path.isfile(path), name)

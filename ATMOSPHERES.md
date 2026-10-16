@@ -162,8 +162,16 @@ python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \
 python plot_gpp_diagnostics.py
 ```
 
-It records land-mean β, f(T), fPAR, SW↓, GPP_light, GPP_water, and `Δln` of
-those vs an Earth-like reference.
+It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
+(`vegppw`), and GPP (`veggpp` = instantaneous min of the two). Plots:
+
+- existing light-factor panels
+- `gpp_rates_by_atmos.png` / `gpp_rate_regime_bars.png`: light, water, and
+  min on the same axes per mix
+- `gpp_dln_attribution.png`: Δln of the light factors vs an n2 reference
+- `gpp_water_dln_attribution.png`: Δln(`vegppw`) split into prescribed `P`
+  and plant CO2 plus a climate leftover (ET / VPD / cover / averaging).
+  That leftover is not a reconstruction of PlaSim eq. 6.11 from time means.
 
 β in that output is the **plant** (clamped) value. `co2_ppmv` is the air
 mixing ratio; `co2veg_ppmv` is what SIMBA used.

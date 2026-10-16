@@ -1,4 +1,4 @@
-"""SIMBA light-limited GPP factor reconstruction.
+"""SIMBA GPP-term reconstruction and attribution.
 
 Matches patched `plasim_patches/simba.f90` vegstep:
 
@@ -8,10 +8,14 @@ Matches patched `plasim_patches/simba.f90` vegstep:
             * clip((45 - T_sfc_C) / 10, 0, 1)   # if T > 35 C; 0 at 45 C
     zveg  = 1 - exp(-0.5 * LAI)
     zgppl = 3.4e-10 * zbeta * zft * zveg * SW_down
+    zgppw = co2conv * P * zveg * ET * (0.3 * zco2p) / VPD
     zgpp  = min(zgppl, zgppw)
 
 Fortran beta is max(0, 1 + BF ln(...)), not the docs' 1 + max(0, BF ln(...)).
 Annual-mean of a product is not the product of annual means.
+
+Water-limited attribution does not rebuild zgppw from time-averaged ET/VPD.
+It splits Δln(vegppw) into prescribed P and plant CO2 plus a climate residual.
 """
 
 import math
@@ -35,6 +39,11 @@ K_VEG = 0.5             # Beer's-law extinction
 CO2_ZERO = 1.0e-8       # Fortran branch: no CO2 => zbeta = 0
 
 LIGHT_FACTORS = ("beta", "fT", "fPAR", "SWdn")
+# Prescribed 6.11 levers (from the run config) plus leftover in vegppw.
+WATER_PRESET_FACTORS = ("p_total_bar", "co2veg_ppmv")
+WATER_CLIMATE_TERM = "gppw_climate"
+WATER_BUDGET_TERMS = WATER_PRESET_FACTORS + (WATER_CLIMATE_TERM,)
+RATE_FIELDS = ("gppl", "gppw", "gpp")
 
 
 def plant_co2_ppmv(co2_ppmv, co2veg_max=CO2VEG_MAX):
@@ -355,20 +364,57 @@ def summarize_from_fields(
     return record
 
 
-def attribution_vs_reference(record, reference):
-    """Fractional (log) contributions of each light factor vs a reference run."""
+def water_budget_vs_reference(record, reference):
+    """Split Δln(GPP_water) into P, plant CO2, and leftover climate.
+
+    P and plant CO2 are exact from the config. The residual is
+    Δln(vegppw) − Δln(P) − Δln(co2veg): ET, VPD, cover, and averaging.
+    """
+    empty = {name: None for name in WATER_BUDGET_TERMS + ("gppw",)}
     if record.get("crashed") or reference is None or reference.get("crashed"):
+        return {"dln": empty, "dominant_water_term": None}
+    dln_p = dln(record.get("p_total_bar"), reference.get("p_total_bar"))
+    dln_co2 = dln(record.get("co2veg_ppmv"), reference.get("co2veg_ppmv"))
+    dln_gppw = dln(record.get("gppw"), reference.get("gppw"))
+    residual = None
+    if dln_gppw is not None and dln_p is not None and dln_co2 is not None:
+        residual = dln_gppw - dln_p - dln_co2
+    terms = {
+        "p_total_bar": dln_p,
+        "co2veg_ppmv": dln_co2,
+        WATER_CLIMATE_TERM: residual,
+        "gppw": dln_gppw,
+    }
+    return {
+        "dln": terms,
+        "dominant_water_term": dominant_term({
+            "p_total_bar": dln_p,
+            "co2veg_ppmv": dln_co2,
+            WATER_CLIMATE_TERM: residual,
+        }),
+    }
+
+
+def attribution_vs_reference(record, reference):
+    """Fractional (log) contributions of light factors and the water budget."""
+    water = water_budget_vs_reference(record, reference)
+    if record.get("crashed") or reference is None or reference.get("crashed"):
+        dln_all = {name: None for name in LIGHT_FACTORS + RATE_FIELDS}
+        dln_all.update(water["dln"])
         return {
-            "dln": {name: None for name in LIGHT_FACTORS + ("gppl", "gppw", "gpp")},
+            "dln": dln_all,
             "dominant_light_term": None,
+            "dominant_water_term": None,
         }
     dln_factors = {
         name: dln(record.get(name), reference.get(name)) for name in LIGHT_FACTORS
     }
     dln_all = dict(dln_factors)
-    for name in ("gppl", "gppw", "gpp"):
+    for name in RATE_FIELDS:
         dln_all[name] = dln(record.get(name), reference.get(name))
+    dln_all.update(water["dln"])
     return {
         "dln": dln_all,
         "dominant_light_term": dominant_term(dln_factors),
+        "dominant_water_term": water["dominant_water_term"],
     }
