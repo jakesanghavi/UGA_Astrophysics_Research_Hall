@@ -164,8 +164,17 @@ python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots --o
 ```
 
 `plot_gpp_diagnostics.py` also writes `gpp_rates_by_atmos.png` and
-`gpp_rate_regime_bars.png` (light, water, and min) and
-`gpp_water_dln_attribution.png` (`P` and plant CO2 vs leftover in `vegppw`).
+`gpp_rate_regime_bars.png` (light, water, and min; crashed points omitted)
+and `gpp_water_dln_attribution.png` (`P` and plant CO2 vs leftover in
+`vegppw`). `gpp_preset_knobs.png` is P, plant CO2, β, and column knobs,
+including `venus_surface` / `mars_surface` even when the GCM crashed.
+The plotter attaches those two as preset-only stubs if they are missing
+from the JSON (`--no-surface-stubs` to skip).
+
+```bash
+python run_gpp_diagnostics.py --atmos venus_surface,mars_surface --masses 1 \
+    --preset-only --output gpp_surface_knobs.json
+```
 
 Other useful flags: `--axis mass|au|mstar`, `--hz` (three HZ distances of
 `--mstar`), `--years`, `--force` (recompute even if the JSON already has the

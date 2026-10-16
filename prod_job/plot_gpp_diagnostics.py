@@ -4,8 +4,11 @@
     python plot_gpp_diagnostics.py
     python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
 
-Writes light-factor panels, combined light/water/min rates, and a water
-budget (prescribed P and plant CO2 vs leftover in vegppw).
+Writes light-factor panels, combined light/water/min rates, a water budget
+(prescribed P and plant CO2 vs leftover in vegppw), and a preset-knob
+comparison. venus_surface / mars_surface are attached as crash-shaped stubs
+when missing so P / plant CO2 / β / column knobs still plot; GPP rate
+charts skip those points.
 """
 
 from __future__ import annotations
@@ -24,7 +27,9 @@ from gpp_terms import (
     LIGHT_FACTORS,
     RATE_FIELDS,
     WATER_BUDGET_TERMS,
+    attach_surface_preset_records,
     attribution_vs_reference,
+    backfill_preset_fields,
     water_budget_vs_reference,
 )
 
@@ -62,6 +67,17 @@ WATER_BUDGET_COLORS = {
     "co2veg_ppmv": "goldenrod",
     "gppw_climate": "seagreen",
 }
+
+PRESET_KNOB_PANELS = [
+    ("p_total_bar", r"$P$ [bar]", True),
+    ("pCO2_bar", r"$p\mathrm{CO}_2$ [bar]", True),
+    ("co2_ppmv", r"air $\mathrm{CO}_2$ [ppmv]", True),
+    ("co2veg_ppmv", r"plant $\mathrm{CO}_2$ [ppmv]", False),
+    ("beta", r"$\beta(\mathrm{CO}_2)$", False),
+    ("timestep_p_factor", r"timestep $P$ factor", False),
+    ("modeltop", "modeltop [mbar]", True),
+    ("mmw", r"mmw [g mol$^{-1}$]", False),
+]
 
 
 def load_bundle(path):
@@ -119,6 +135,16 @@ def atmos_label(atmos):
     return PRESETS.get(atmos, {}).get("label", atmos)
 
 
+def atmos_with_gpp(by_atmos):
+    """Atmospheres that have at least one live GPP point. Stubs stay off rate charts."""
+    names = []
+    for atmos in atmos_order(by_atmos):
+        rows = by_atmos[atmos]
+        if any((not rec.get("crashed")) and rec.get("gpp") is not None for rec in rows):
+            names.append(atmos)
+    return names
+
+
 def pick_reference(records):
     """Prefer 1 Me / 1 Msun / 1 AU / n2; else 1 Me on n2; else first live n2; else first live."""
     def live(rec):
@@ -139,11 +165,11 @@ def pick_reference(records):
     return None
 
 
-def xy(rows, axis, field):
+def xy(rows, axis, field, include_crashed=False):
     key = axis_key(axis)
     xs, ys = [], []
     for rec in rows:
-        if rec.get("crashed"):
+        if rec.get("crashed") and not include_crashed:
             continue
         value = rec.get(field)
         if value is None:
@@ -153,8 +179,30 @@ def xy(rows, axis, field):
     return np.array(xs, dtype=float), np.array(ys, dtype=float)
 
 
+def xy_live_crash(rows, axis, field):
+    """Live points and crashed/preset-only points as separate series."""
+    key = axis_key(axis)
+    live_x, live_y, crash_x, crash_y = [], [], [], []
+    for rec in rows:
+        value = rec.get(field)
+        if value is None:
+            continue
+        if rec.get("crashed"):
+            crash_x.append(rec[key])
+            crash_y.append(value)
+        else:
+            live_x.append(rec[key])
+            live_y.append(value)
+    return (
+        np.array(live_x, dtype=float), np.array(live_y, dtype=float),
+        np.array(crash_x, dtype=float), np.array(crash_y, dtype=float),
+    )
+
+
 def plot_factors(by_atmos, axis, outdir):
-    atmos_names = atmos_order(by_atmos)
+    atmos_names = atmos_with_gpp(by_atmos)
+    if not atmos_names:
+        return None
     nrows = len(FACTOR_PANELS)
     ncols = max(len(atmos_names), 1)
     fig, axes = plt.subplots(
@@ -185,12 +233,15 @@ def plot_factors(by_atmos, axis, outdir):
 
 def plot_overlay(by_atmos, axis, outdir):
     """Each factor on one panel, one line per atmosphere."""
+    atmos_names = atmos_with_gpp(by_atmos)
+    if not atmos_names:
+        return None
     fig, axes = plt.subplots(
         2, 4, figsize=(11.0, 5.4), sharex=True, squeeze=False
     )
     axes = axes.ravel()
     for ax, (field, title) in zip(axes, FACTOR_PANELS):
-        for atmos in atmos_order(by_atmos):
+        for atmos in atmos_names:
             xs, ys = xy(by_atmos[atmos], axis, field)
             if not xs.size:
                 continue
@@ -213,7 +264,7 @@ def plot_overlay(by_atmos, axis, outdir):
 
 def plot_gpp_ratio(by_atmos, axis, outdir):
     """GPP / n2 GPP at the same mass (or AU / M*). n2 is a flat 1."""
-    if "n2" not in by_atmos:
+    if "n2" not in atmos_with_gpp(by_atmos):
         return None
     key = axis_key(axis)
     n2_map = {}
@@ -224,7 +275,7 @@ def plot_gpp_ratio(by_atmos, axis, outdir):
     if not n2_map:
         return None
     fig, ax = plt.subplots(figsize=(6.5, 3.6))
-    for atmos in atmos_order(by_atmos):
+    for atmos in atmos_with_gpp(by_atmos):
         xs, ys = [], []
         for rec in by_atmos[atmos]:
             if rec.get("crashed") or rec.get("gpp") is None:
@@ -295,7 +346,9 @@ def plot_attribution(records, reference, axis, outdir):
 
 def plot_rates_by_atmos(by_atmos, axis, outdir):
     """GPP_light, GPP_water, and min on one panel per atmosphere."""
-    atmos_names = atmos_order(by_atmos)
+    atmos_names = atmos_with_gpp(by_atmos)
+    if not atmos_names:
+        return None
     ncols = max(len(atmos_names), 1)
     fig, axes = plt.subplots(
         1, ncols,
@@ -343,7 +396,7 @@ def plot_rate_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
                 return rec[field]
         return None
 
-    atmos_names = atmos_order(by_atmos)
+    atmos_names = atmos_with_gpp(by_atmos)
     if not atmos_names:
         return None
     nmass = len(masses)
@@ -383,25 +436,39 @@ def plot_rate_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
     return path
 
 
+def _water_budget_rows(records, axis):
+    """Rows with P, including crashed / preset-only (leftover stays None)."""
+    preferred = {name: i for i, name in enumerate(
+        ("n2", "co2", "mars", "evolved", "venus_surface", "mars_surface")
+    )}
+    key = axis_key(axis)
+    rows = [rec for rec in records if rec.get("p_total_bar") is not None]
+    rows.sort(key=lambda rec: (
+        preferred.get(rec.get("atmos"), 99),
+        rec.get(key) if rec.get(key) is not None else 0.0,
+        rec.get("atmos") or "",
+    ))
+    return rows
+
+
 def plot_water_attribution(records, reference, axis, outdir):
     """Stacked Δln(GPP_water) = Δln P + Δln plant CO2 + climate leftover."""
     if reference is None:
         return None
-    live = [
-        rec for rec in records
-        if not rec.get("crashed") and rec.get("gppw") is not None
-    ]
-    if not live:
+    rows = _water_budget_rows(records, axis)
+    if not rows:
         return None
-    budgets = [water_budget_vs_reference(rec, reference) for rec in live]
+    budgets = [water_budget_vs_reference(rec, reference) for rec in rows]
     if all(b["dln"][name] is None for b in budgets for name in WATER_BUDGET_TERMS):
         return None
-    fig, ax = plt.subplots(figsize=(max(6.0, 0.7 * len(live) + 2), 3.8))
-    x = np.arange(len(live))
-    bottoms_pos = np.zeros(len(live))
-    bottoms_neg = np.zeros(len(live))
+    fig, ax = plt.subplots(figsize=(max(6.0, 0.7 * len(rows) + 2), 3.8))
+    x = np.arange(len(rows))
+    bottoms_pos = np.zeros(len(rows))
+    bottoms_neg = np.zeros(len(rows))
     for name in WATER_BUDGET_TERMS:
-        values = np.array([b["dln"][name] or 0.0 for b in budgets])
+        values = np.array([
+            0.0 if b["dln"][name] is None else b["dln"][name] for b in budgets
+        ])
         pos = np.where(values >= 0.0, values, 0.0)
         neg = np.where(values < 0.0, values, 0.0)
         ax.bar(x, pos, bottom=bottoms_pos, color=WATER_BUDGET_COLORS[name],
@@ -409,12 +476,14 @@ def plot_water_attribution(records, reference, axis, outdir):
         ax.bar(x, neg, bottom=bottoms_neg, color=WATER_BUDGET_COLORS[name])
         bottoms_pos += pos
         bottoms_neg += neg
-    labels = [
-        "{a}/{p} M={m:g}".format(
+    labels = []
+    for rec in rows:
+        tag = "{a}/{p} M={m:g}".format(
             a=rec["atmos"], p=rec.get("physics") or "earth", m=rec[axis_key(axis)]
         )
-        for rec in live
-    ]
+        if rec.get("crashed"):
+            tag += "*"
+        labels.append(tag)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=90)
     ax.axhline(0.0, color="0.3", lw=0.8)
@@ -423,11 +492,68 @@ def plot_water_attribution(records, reference, axis, outdir):
         "Water budget vs "
         f"{reference['atmos']} M={reference['mass_ratio']:g}, "
         f"M*={reference['mstar']:g}, AU={reference['au']:g}"
-        "\n(P and plant CO2 from config; leftover is ET/VPD/cover)"
+        "\n(P and plant CO2 from config; leftover is ET/VPD/cover;"
+        " * crashed / preset-only, leftover unknown)"
     )
     ax.legend()
     fig.tight_layout()
     path = os.path.join(outdir, "gpp_water_dln_attribution.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_preset_knobs(by_atmos, axis, outdir):
+    """Prescribed mix/column knobs, including crashed venus_surface / mars_surface."""
+    atmos_names = atmos_order(by_atmos)
+    if not atmos_names:
+        return None
+    fig, axes = plt.subplots(
+        2, 4, figsize=(12.0, 5.6), sharex=True, squeeze=False
+    )
+    axes = axes.ravel()
+    colors = plt.rcParams["axes.prop_cycle"].by_key().get("color") or ["C0"]
+    any_crash = False
+    for ax, (field, title, log_y) in zip(axes, PRESET_KNOB_PANELS):
+        for i, atmos in enumerate(atmos_names):
+            color = colors[i % len(colors)]
+            live_x, live_y, crash_x, crash_y = xy_live_crash(
+                by_atmos[atmos], axis, field
+            )
+            label = atmos_label(atmos)
+            if live_x.size:
+                ax.plot(live_x, live_y, marker="o", color=color, label=label)
+            if crash_x.size:
+                any_crash = True
+                crash_label = None if live_x.size else label
+                ax.plot(
+                    crash_x, crash_y, ls="none", marker="x", ms=8,
+                    color=color, label=crash_label,
+                )
+        ax.set_title(title)
+        ax.set_xlabel(axis_label(axis))
+        if log_y:
+            ax.set_yscale("log")
+    if any_crash:
+        axes[0].plot([], [], ls="none", marker="x", color="0.3",
+                     label="crashed / preset-only")
+    handles, labels = [], []
+    for ax in axes:
+        h, lab = ax.get_legend_handles_labels()
+        for handle, name in zip(h, lab):
+            if name not in labels:
+                handles.append(handle)
+                labels.append(name)
+    if handles:
+        fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 6),
+                   bbox_to_anchor=(0.5, 1.0), frameon=False)
+    fig.suptitle(
+        "Prescribed GPP knobs (no GCM year required)\n"
+        "x = crashed or plot-time stub; 1-bar modeltop is Model default",
+        y=1.08,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    path = os.path.join(outdir, "gpp_preset_knobs.png")
     fig.savefig(path)
     plt.close(fig)
     return path
@@ -457,7 +583,9 @@ def plot_gpp_regime_bars(by_atmos, outdir, masses=(1.0, 1.5)):
         return None
 
     earth_1 = gpp_at("n2", 1.0)
-    atmos_names = atmos_order(by_atmos)
+    atmos_names = atmos_with_gpp(by_atmos)
+    if not atmos_names:
+        return None
     x = np.arange(len(masses), dtype=float)
     width = 0.8 / max(len(atmos_names), 1)
     fig, ax = plt.subplots(figsize=(6.4, 3.8))
@@ -503,7 +631,19 @@ def parse_args(argv=None):
         action="store_true",
         help="write only gpp_regime_bars.png",
     )
+    parser.add_argument(
+        "--no-surface-stubs",
+        action="store_true",
+        help="do not attach venus_surface / mars_surface preset-only records",
+    )
     return parser.parse_args(argv)
+
+
+def prepare_records(records, attach_stubs=True):
+    prepared = [backfill_preset_fields(dict(rec)) for rec in records]
+    if attach_stubs:
+        prepared = attach_surface_preset_records(prepared)
+    return prepared
 
 
 def main(argv=None):
@@ -512,6 +652,7 @@ def main(argv=None):
     records = bundle["records"]
     if not records:
         raise SystemExit(f"no records in {args.input}")
+    records = prepare_records(records, attach_stubs=not args.no_surface_stubs)
     axis = infer_axis(records, bundle.get("axis") or args.axis)
     os.makedirs(args.outdir, exist_ok=True)
     by_atmos = grouped(records)
@@ -528,6 +669,7 @@ def main(argv=None):
             plot_gpp_regime_bars(by_atmos, args.outdir),
             plot_attribution(records, ref, axis, args.outdir),
             plot_water_attribution(records, ref, axis, args.outdir),
+            plot_preset_knobs(by_atmos, axis, args.outdir),
         ]
     for path in written:
         if path:

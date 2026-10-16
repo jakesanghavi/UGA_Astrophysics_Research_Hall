@@ -591,6 +591,8 @@ def calculate_veg(
 
     if planet == 0 or planet is None:
         # Every attempt crashed: distinct from a genuine zero-vegetation result.
+        # Mix / column knobs still go on the record so diagnostic plots can
+        # compare P, plant CO2, β, and the vertical-grid settings.
         if diagnostics:
             return base_record(
                 mass_ratio=mass_ratio,
@@ -603,6 +605,7 @@ def calculate_veg(
                 radius=r_new,
                 toa_flux=flux,
                 startemp=startemp,
+                params=local_params,
             )
         return [None, None]
 

@@ -22,7 +22,21 @@ import math
 
 import numpy as np
 
-from atmos_presets import co2_ppmv_from_params, total_pressure_bar
+from atmos_presets import (
+    PRESETS,
+    column_setup,
+    co2_ppmv_from_params,
+    thermo_from_params,
+    timestep_pressure_factor,
+    total_pressure_bar,
+)
+
+# Plot-time stubs for columns that crash before vegppw exists.
+SURFACE_STUB_ATMOS = ("venus_surface", "mars_surface")
+COLUMN_RECORD_KEYS = (
+    "modeltop", "vtype", "drycore", "orography",
+    "pressurebroaden", "physicsfilter",
+)
 
 # SIMBA / landmod constants (mks). Keep in sync with plasim_patches/simba.f90.
 RLUE = 3.4e-10          # kg C / J  (epsilon_luemax)
@@ -194,6 +208,131 @@ def dominant_term(dln_terms):
     return ranked[0][1]
 
 
+def fill_preset_fields(record, params):
+    """Mix and column knobs that do not need a finished GCM year.
+
+    Used for live summaries, crash records, and plot-time surface stubs.
+    Prefer values already on `params` (what configure() actually got).
+    """
+    if not params:
+        return record
+    p_tot = total_pressure_bar(params)
+    co2_ppmv = co2_ppmv_from_params(params)
+    co2veg = plant_co2_ppmv(co2_ppmv)
+    record["p_total_bar"] = _finite(p_tot)
+    record["pCO2_bar"] = _finite(params.get("pCO2"))
+    record["pH2_bar"] = _finite(params.get("pH2"))
+    record["pHe_bar"] = _finite(params.get("pHe"))
+    record["co2_ppmv"] = _finite(co2_ppmv)
+    record["co2veg_ppmv"] = _finite(co2veg)
+    record["beta"] = _finite(beta_co2(co2veg))
+    try:
+        thermo = thermo_from_params(params)
+        record["mmw"] = _finite(thermo["mmw"])
+        record["gascon"] = _finite(thermo["gascon"])
+        record["akap_mix"] = _finite(thermo["akap"])
+    except ValueError:
+        pass
+    p_h2o = float(params.get("pH2O", 0.0) or 0.0)
+    col = {}
+    if p_tot > 0.0:
+        col = column_setup(p_tot, p_h2o_bar=p_h2o)
+        record["timestep_p_factor"] = _finite(timestep_pressure_factor(p_tot))
+    for key in COLUMN_RECORD_KEYS:
+        if key in params:
+            value = params[key]
+        elif key in col:
+            value = col[key]
+        else:
+            continue
+        record[key] = _finite(value) if not isinstance(value, (bool, str)) else value
+    if "timestep" in params:
+        record["timestep_min"] = _finite(params.get("timestep"))
+    return record
+
+
+def gases_for_preset(atmos_type):
+    """Static mix for a preset. None for evolved (H/He is run-dependent)."""
+    if atmos_type not in PRESETS or atmos_type == "evolved":
+        return None
+    return dict(PRESETS[atmos_type]["gases"])
+
+
+def backfill_preset_fields(record):
+    """Fill mix/column knobs from the named preset when those fields are empty.
+
+    Does not overwrite values already on the record (live GPP / β stay).
+    Skips evolved: H/He is run-dependent.
+    """
+    gases = gases_for_preset(record.get("atmos"))
+    if gases is None:
+        return record
+    filled = {}
+    fill_preset_fields(filled, gases)
+    for key, value in filled.items():
+        if record.get(key) is None and value is not None:
+            record[key] = value
+    return record
+
+
+def preset_only_record(
+    *,
+    mass_ratio,
+    mstar,
+    au,
+    atmos_type,
+    physics_mode="earth",
+):
+    """Crash-shaped record with only prescribed knobs (no ExoPlaSim year)."""
+    record = base_record(
+        mass_ratio=mass_ratio,
+        mstar=mstar,
+        au=au,
+        atmos_type=atmos_type,
+        physics_mode=physics_mode,
+        crashed=True,
+    )
+    record["preset_only"] = True
+    gases = gases_for_preset(atmos_type)
+    if gases is not None:
+        fill_preset_fields(record, gases)
+    return record
+
+
+def attach_surface_preset_records(records, atmos=SURFACE_STUB_ATMOS):
+    """Add venus_surface / mars_surface stubs on the same (mass, M*, AU) grid.
+
+    GPP charts skip crashed points. Knob and water-budget charts use P / plant
+    CO2 / β / column fields, which do not need a year.
+    """
+    from atmos_presets import default_physics_mode
+
+    if not records:
+        return list(records)
+    existing = {
+        (rec.get("atmos"), rec.get("mass_ratio"), rec.get("mstar"), rec.get("au"))
+        for rec in records
+    }
+    coords = sorted({
+        (rec.get("mass_ratio"), rec.get("mstar"), rec.get("au"))
+        for rec in records
+        if rec.get("mass_ratio") is not None
+        and rec.get("mstar") is not None
+        and rec.get("au") is not None
+    })
+    extra = []
+    for atmos_type in atmos:
+        physics = default_physics_mode(atmos_type)
+        for mass, mstar, au in coords:
+            if (atmos_type, mass, mstar, au) in existing:
+                continue
+            extra.append(preset_only_record(
+                mass_ratio=mass, mstar=mstar, au=au,
+                atmos_type=atmos_type, physics_mode=physics,
+            ))
+    return list(records) + extra
+
+
 def base_record(
     *,
     mass_ratio,
@@ -208,15 +347,17 @@ def base_record(
     startemp=None,
     avg_gpp=None,
     tot_gpp=None,
+    params=None,
 ):
     """JSON-safe skeleton for one diagnostic grid point (including crashes)."""
-    return {
+    record = {
         "atmos": atmos_type,
         "physics": physics_mode,
         "mass_ratio": _finite(mass_ratio),
         "mstar": _finite(mstar),
         "au": _finite(au),
         "crashed": bool(crashed),
+        "preset_only": False,
         "gravity": _finite(gravity),
         "radius_rearth": _finite(radius),
         "toa_flux": _finite(toa_flux),
@@ -234,6 +375,14 @@ def base_record(
         "akap_mix": None,
         "epsilon": RLUE,
         "beta": None,
+        "modeltop": None,
+        "vtype": None,
+        "drycore": None,
+        "orography": None,
+        "pressurebroaden": None,
+        "physicsfilter": None,
+        "timestep_p_factor": None,
+        "timestep_min": None,
         "gpp": None,
         "gppl": None,
         "gppw": None,
@@ -248,6 +397,9 @@ def base_record(
         "gppl_reconstructed": None,
         "gppl_recon_relerr": None,
     }
+    if params:
+        fill_preset_fields(record, params)
+    return record
 
 
 def summarize_from_fields(
@@ -290,30 +442,12 @@ def summarize_from_fields(
         startemp=startemp,
         avg_gpp=avg_gpp,
         tot_gpp=tot_gpp,
+        params=params,
     )
     if crashed:
         return record
 
-    from atmos_presets import thermo_from_params
-
-    p_tot = total_pressure_bar(params)
-    co2_ppmv = co2_ppmv_from_params(params)
-    co2veg = plant_co2_ppmv(co2_ppmv)
-    beta = beta_co2(co2veg)
-    record["p_total_bar"] = _finite(p_tot)
-    record["pCO2_bar"] = _finite(params.get("pCO2"))
-    record["pH2_bar"] = _finite(params.get("pH2"))
-    record["pHe_bar"] = _finite(params.get("pHe"))
-    record["co2_ppmv"] = _finite(co2_ppmv)
-    record["co2veg_ppmv"] = _finite(co2veg)
-    record["beta"] = _finite(beta)
-    try:
-        thermo = thermo_from_params(params)
-        record["mmw"] = _finite(thermo["mmw"])
-        record["gascon"] = _finite(thermo["gascon"])
-        record["akap_mix"] = _finite(thermo["akap"])
-    except ValueError:
-        pass
+    beta = record["beta"] if record["beta"] is not None else 0.0
 
     aligned = _align_fields({
         "gpp": gpp, "gppl": gppl, "gppw": gppw, "lai": lai, "ts": ts,
@@ -367,11 +501,12 @@ def summarize_from_fields(
 def water_budget_vs_reference(record, reference):
     """Split Δln(GPP_water) into P, plant CO2, and leftover climate.
 
-    P and plant CO2 are exact from the config. The residual is
-    Δln(vegppw) − Δln(P) − Δln(co2veg): ET, VPD, cover, and averaging.
+    P and plant CO2 are exact from the config, including crashed / preset-only
+    records. The residual Δln(vegppw) − Δln(P) − Δln(co2veg) needs a finished
+    vegppw (ET, VPD, cover, averaging) and stays None without one.
     """
     empty = {name: None for name in WATER_BUDGET_TERMS + ("gppw",)}
-    if record.get("crashed") or reference is None or reference.get("crashed"):
+    if reference is None or reference.get("crashed"):
         return {"dln": empty, "dominant_water_term": None}
     dln_p = dln(record.get("p_total_bar"), reference.get("p_total_bar"))
     dln_co2 = dln(record.get("co2veg_ppmv"), reference.get("co2veg_ppmv"))
@@ -404,7 +539,7 @@ def attribution_vs_reference(record, reference):
         return {
             "dln": dln_all,
             "dominant_light_term": None,
-            "dominant_water_term": None,
+            "dominant_water_term": water["dominant_water_term"],
         }
     dln_factors = {
         name: dln(record.get(name), reference.get(name)) for name in LIGHT_FACTORS

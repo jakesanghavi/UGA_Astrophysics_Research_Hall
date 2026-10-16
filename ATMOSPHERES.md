@@ -165,13 +165,23 @@ python plot_gpp_diagnostics.py
 It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
 (`vegppw`), and GPP (`veggpp` = instantaneous min of the two). Plots:
 
-- existing light-factor panels
+- existing light-factor panels (live GPP only)
 - `gpp_rates_by_atmos.png` / `gpp_rate_regime_bars.png`: light, water, and
-  min on the same axes per mix
+  min on the same axes per mix (crashed points omitted)
 - `gpp_dln_attribution.png`: Δln of the light factors vs an n2 reference
 - `gpp_water_dln_attribution.png`: Δln(`vegppw`) split into prescribed `P`
   and plant CO2 plus a climate leftover (ET / VPD / cover / averaging).
   That leftover is not a reconstruction of PlaSim eq. 6.11 from time means.
+  Crashed / preset-only rows still show Δln P and Δln plant CO2; leftover
+  is blank. `*` on the label.
+- `gpp_preset_knobs.png`: P, pCO2, air CO2, plant CO2, β, timestep P-factor,
+  modeltop, mmw. `plot_gpp_diagnostics.py` attaches `venus_surface` /
+  `mars_surface` stubs on the same (mass, M*, AU) grid when those mixes are
+  missing, so the 92 bar / 6.36 mbar knobs plot without launching a GCM
+  year. `--no-surface-stubs` turns that off.
+
+`--preset-only` on `run_gpp_diagnostics.py` writes the same mix/column
+fields with no ExoPlaSim. Default `--atmos` is still `evolved,n2,co2`.
 
 β in that output is the **plant** (clamped) value. `co2_ppmv` is the air
 mixing ratio; `co2veg_ppmv` is what SIMBA used.

@@ -133,6 +133,25 @@ class TestSummarize(unittest.TestCase):
         self.assertIsNone(rec["gpp"])
         self.assertIsNone(rec["beta"])
 
+    def test_crashed_with_params_fills_presets(self):
+        rec = gt.summarize_from_fields(
+            gpp=None, gppl=None, gppw=None, lai=None, ts=None, rss=None,
+            land_mask=np.array([[1.0]]),
+            params=dict(ap.PRESETS["venus_surface"]["gases"]),
+            mass_ratio=1.0, mstar=1.0, au=1.0, atmos_type="venus_surface",
+            crashed=True,
+        )
+        self.assertTrue(rec["crashed"])
+        self.assertIsNone(rec["gpp"])
+        self.assertIsNone(rec["gppw"])
+        self.assertAlmostEqual(rec["p_total_bar"], ap.VENUS_SURFACE_BAR, places=6)
+        self.assertAlmostEqual(rec["co2veg_ppmv"], gt.CO2VEG_MAX, places=6)
+        self.assertEqual(rec["beta"], 1.0)
+        self.assertEqual(rec["vtype"], 3)
+        self.assertAlmostEqual(rec["modeltop"], 50.0, places=5)
+        self.assertTrue(rec["drycore"])
+        self.assertAlmostEqual(rec["timestep_p_factor"], 5.0 / 45.0, places=5)
+
     def test_venus_air_co2_clamped_in_summary(self):
         fields = self._toy_fields()
         fields["params"] = dict(ap.VENUSLIKE_GASES)
@@ -207,6 +226,65 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(budget["dln"]["p_total_bar"], 0.0)
         self.assertAlmostEqual(budget["dln"]["gppw_climate"], 0.0, places=12)
         self.assertEqual(budget["dominant_water_term"], "co2veg_ppmv")
+
+    def test_water_budget_crashed_still_splits_p(self):
+        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
+        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+        vs = gt.preset_only_record(
+            mass_ratio=1.0, mstar=1.0, au=1.0,
+            atmos_type="venus_surface", physics_mode="other",
+        )
+        ref = {
+            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
+        }
+        budget = gt.water_budget_vs_reference(vs, ref)
+        self.assertTrue(vs["crashed"])
+        self.assertIsNone(vs["gppw"])
+        self.assertAlmostEqual(
+            budget["dln"]["p_total_bar"], math.log(ap.VENUS_SURFACE_BAR / n2_p),
+            places=6,
+        )
+        self.assertIsNone(budget["dln"]["gppw_climate"])
+        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
+
+    def test_mars_surface_water_budget_is_thin_p(self):
+        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
+        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+        ms = gt.preset_only_record(
+            mass_ratio=1.0, mstar=1.0, au=1.0,
+            atmos_type="mars_surface", physics_mode="other",
+        )
+        ref = {
+            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
+        }
+        budget = gt.water_budget_vs_reference(ms, ref)
+        self.assertLess(budget["dln"]["p_total_bar"], 0.0)
+        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
+        self.assertEqual(ms["vtype"], 4)
+        self.assertEqual(ms["orography"], 0.0)
+
+    def test_attach_surface_stubs_on_existing_grid(self):
+        live = gt.base_record(
+            mass_ratio=1.0, mstar=1.0, au=1.0, atmos_type="n2",
+            params=dict(ap.EARTHLIKE_GASES),
+        )
+        live["crashed"] = False
+        live["gpp"] = 1.0
+        attached = gt.attach_surface_preset_records([live])
+        names = {rec["atmos"] for rec in attached}
+        self.assertEqual(names, {"n2", "venus_surface", "mars_surface"})
+        again = gt.attach_surface_preset_records(attached)
+        self.assertEqual(len(again), len(attached))
+
+    def test_backfill_crashed_surface_record(self):
+        rec = gt.base_record(
+            mass_ratio=1.0, mstar=1.0, au=1.0,
+            atmos_type="mars_surface", crashed=True,
+        )
+        self.assertIsNone(rec["p_total_bar"])
+        filled = gt.backfill_preset_fields(rec)
+        self.assertAlmostEqual(filled["p_total_bar"], ap.MARS_SURFACE_BAR, places=6)
+        self.assertEqual(filled["orography"], 0.0)
 
 
 class TestPresets(unittest.TestCase):
@@ -480,6 +558,25 @@ class TestDiagnosticCli(unittest.TestCase):
         ])
         self.assertEqual(args.atmos, ["venus_surface", "mars_surface"])
 
+    def test_preset_only_writes_json_without_exoplasim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "gpp_diag.json")
+            rc = runner.main([
+                "--preset-only", "--atmos", "venus_surface,mars_surface",
+                "--masses", "1", "--output", out,
+            ])
+            self.assertEqual(rc, 0)
+            with open(out) as handle:
+                bundle = json.load(handle)
+            atmos = {rec["atmos"] for rec in bundle["records"]}
+            self.assertEqual(atmos, {"venus_surface", "mars_surface"})
+            for rec in bundle["records"]:
+                self.assertTrue(rec["crashed"])
+                self.assertTrue(rec["preset_only"])
+                self.assertIsNone(rec["gpp"])
+                self.assertIsNotNone(rec["p_total_bar"])
+                self.assertIsNotNone(rec["beta"])
+
     def test_physics_mapping_matches_demo(self):
         args = runner.parse_args([
             "--dry-run", "--atmos", "n2,co2,mars", "--masses", "1,1.5",
@@ -553,6 +650,14 @@ class TestPlotter(unittest.TestCase):
             with open(json_path, "w") as handle:
                 json.dump({"axis": "mass", "records": records}, handle)
             plotter.main(["--input", json_path, "--outdir", outdir])
+            prepared = plotter.prepare_records(records)
+            by_atmos = plotter.grouped(prepared)
+            self.assertIn("venus_surface", by_atmos)
+            self.assertIn("mars_surface", by_atmos)
+            self.assertEqual(
+                plotter.atmos_with_gpp(by_atmos),
+                ["n2", "co2", "evolved"],
+            )
             for name in (
                 "gpp_terms_by_atmos.png",
                 "gpp_terms_overlay.png",
@@ -562,6 +667,7 @@ class TestPlotter(unittest.TestCase):
                 "gpp_regime_bars.png",
                 "gpp_dln_attribution.png",
                 "gpp_water_dln_attribution.png",
+                "gpp_preset_knobs.png",
             ):
                 path = os.path.join(outdir, name)
                 self.assertTrue(os.path.isfile(path), name)
