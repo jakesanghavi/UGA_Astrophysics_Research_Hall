@@ -8,6 +8,7 @@ Run from prod_job/:
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import os
@@ -291,6 +292,131 @@ class TestThermoAndPhysics(unittest.TestCase):
             ap.regime_file_tag("normal", "mars_surface", "other"),
             "_normal_mars_surface_other",
         )
+
+
+class TestRunConfigs(unittest.TestCase):
+    def test_surface_defaults_other_and_no_ozone(self):
+        vs = ap.resolve_run_config("venus_surface")
+        self.assertEqual(vs["atmos_type"], "venus_surface")
+        self.assertEqual(vs["physics_mode"], "other")
+        self.assertFalse(vs["ozone"])
+        self.assertEqual(vs["extras"]["rotationperiod"], 1.0)
+        self.assertFalse(vs["extras"]["synchronous"])
+        ms = ap.resolve_run_config({"atmos_type": "mars_surface"})
+        self.assertEqual(ms["physics_mode"], "other")
+        self.assertFalse(ms["ozone"])
+
+    def test_n2_keeps_earth_physics_and_ozone(self):
+        cfg = ap.resolve_run_config({"atmos_type": "n2"})
+        self.assertEqual(cfg["physics_mode"], "earth")
+        self.assertTrue(cfg["ozone"])
+        self.assertTrue(cfg["extras"]["ozone"])
+
+    def test_overnight_sequence_order(self):
+        cfgs = ap.resolve_run_configs(["venus_surface", "mars_surface"])
+        self.assertEqual(
+            [c["atmos_type"] for c in cfgs],
+            ["venus_surface", "mars_surface"],
+        )
+        self.assertEqual(cfgs[0]["run_mode"], "normal")
+
+    def test_empty_list_rejected(self):
+        with self.assertRaises(ValueError):
+            ap.resolve_run_configs([])
+
+    def test_overrides(self):
+        cfg = ap.resolve_run_config({
+            "atmos_type": "co2",
+            "physics_mode": "earth",
+            "ozone": True,
+            "run_mode": "mass_only",
+            "rotationperiod": 243.0,
+        })
+        self.assertEqual(cfg["physics_mode"], "earth")
+        self.assertTrue(cfg["ozone"])
+        self.assertEqual(cfg["run_mode"], "mass_only")
+        self.assertEqual(cfg["extras"]["rotationperiod"], 243.0)
+
+    def test_column_overrides_pass_through(self):
+        cfg = ap.resolve_run_config({
+            "atmos_type": "mars_surface",
+            "orography": 0.5,
+            "drycore": False,
+        })
+        self.assertEqual(cfg["extras"]["orography"], 0.5)
+        self.assertFalse(cfg["extras"]["drycore"])
+
+    def test_run_model_default_is_surface_sequence(self):
+        path = os.path.join(os.path.dirname(__file__), "run_model.py")
+        with open(path) as handle:
+            tree = ast.parse(handle.read(), filename=path)
+        raw = None
+        mode = None
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if "RUN_CONFIGS" in names:
+                raw = ast.literal_eval(node.value)
+            if "RUN_MODE" in names:
+                mode = ast.literal_eval(node.value)
+        self.assertEqual(raw, [
+            {"atmos_type": "venus_surface"},
+            {"atmos_type": "mars_surface"},
+        ])
+        cfgs = ap.resolve_run_configs(raw, default_run_mode=mode)
+        self.assertEqual(cfgs[0]["physics_mode"], "other")
+        self.assertEqual(cfgs[1]["physics_mode"], "other")
+        self.assertFalse(cfgs[0]["ozone"])
+        self.assertFalse(cfgs[1]["ozone"])
+
+
+class TestColumnSetup(unittest.TestCase):
+    def test_one_bar_keeps_model_defaults(self):
+        self.assertEqual(ap.column_setup(1.0), {})
+        self.assertEqual(ap.column_setup(ap.total_pressure_bar(ap.VENUSLIKE_GASES)), {})
+        self.assertEqual(ap.model_precision(1.0), 4)
+        self.assertEqual(ap.timestep_pressure_factor(1.0), 1.0)
+
+    def test_mars_surface_top_below_surface(self):
+        p = ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"])
+        cfg = ap.column_setup(p, p_h2o_bar=0.0)
+        self.assertLess(p * 1000.0, 50.0)
+        self.assertEqual(cfg["vtype"], 4)
+        self.assertLess(cfg["modeltop"], p * 1000.0)
+        self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=5)
+        self.assertEqual(cfg["orography"], 0.0)
+        self.assertTrue(cfg["drycore"])
+        self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")
+        self.assertEqual(ap.model_precision(p), 8)
+        self.assertAlmostEqual(ap.timestep_pressure_factor(p), 5.0 / 45.0, places=5)
+
+    def test_venus_surface_keeps_earth_lid(self):
+        p = ap.total_pressure_bar(ap.PRESETS["venus_surface"]["gases"])
+        cfg = ap.column_setup(p, p_h2o_bar=0.0)
+        self.assertEqual(cfg["vtype"], 3)
+        self.assertAlmostEqual(cfg["modeltop"], 50.0, places=5)
+        self.assertLess(cfg["modeltop"], p * 1000.0)
+        self.assertNotIn("orography", cfg)
+        self.assertTrue(cfg["drycore"])
+        self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")
+        self.assertEqual(ap.model_precision(p), 8)
+        self.assertAlmostEqual(ap.timestep_pressure_factor(p), 5.0 / 45.0, places=5)
+
+    def test_wet_thick_column_does_not_force_drycore(self):
+        cfg = ap.column_setup(92.0, p_h2o_bar=0.01)
+        self.assertNotIn("drycore", cfg)
+        self.assertEqual(cfg["vtype"], 3)
+        self.assertAlmostEqual(cfg["modeltop"], 50.0, places=5)
+
+    def test_snap_timestep(self):
+        self.assertEqual(ap.snap_timestep_min(45.0), 45.0)
+        self.assertEqual(ap.snap_timestep_min(11.0), 10.0)
+        self.assertEqual(ap.snap_timestep_min(4.9), 3.0)
+        self.assertEqual(ap.snap_timestep_min(5.0), 5.0)
+        self.assertEqual(ap.snap_timestep_min(2.0, floor=3.0), 3.0)
 
 
 class TestDiagnosticCli(unittest.TestCase):

@@ -162,6 +162,87 @@ def resolve_physics_mode(physics_mode):
     return physics_mode
 
 
+# n2 / evolved keep Earth ozone and earth physics unless a config overrides.
+EARTHLIKE_ATMOS = ("n2", "evolved")
+
+# Extra ExoPlaSim configure() keys a RUN_CONFIGS entry may set.
+CONFIGURE_OPTIONAL_KEYS = (
+    "rotationperiod",
+    "synchronous",
+    "obliquity",
+    "eccentricity",
+    "fixedorbit",
+    "year",
+    "desertplanet",
+    "aquaplanet",
+    "vegetation",
+    "wetsoil",
+    "drycore",
+    "orography",
+    "ozone",
+    "modeltop",
+    "vtype",
+    "pressurebroaden",
+    "physicsfilter",
+)
+
+
+def default_physics_mode(atmos_type):
+    """earth for N2/O2 mixes; other for CO2-dominated air (not p_mars.f90)."""
+    atmos = resolve_atmos_type(atmos_type)
+    if atmos in EARTHLIKE_ATMOS:
+        return "earth"
+    return "other"
+
+
+def default_ozone(atmos_type):
+    """Earth ozone only for O2-bearing mixes."""
+    return resolve_atmos_type(atmos_type) in EARTHLIKE_ATMOS
+
+
+def resolve_run_config(raw, default_run_mode="normal"):
+    """Fill physics, ozone, and Earth-day extras for one sweep.
+
+    `raw` is an atmos name or a dict with at least `atmos_type`. Optional keys:
+    `run_mode`, `physics_mode`, `atmos_params`, `ozone`, plus
+    CONFIGURE_OPTIONAL_KEYS, or `extras` for any other configure() kwargs.
+    """
+    if isinstance(raw, str):
+        raw = {"atmos_type": raw}
+    if not isinstance(raw, dict) or "atmos_type" not in raw:
+        raise ValueError(f"run config needs atmos_type; got {raw!r}")
+    atmos = resolve_atmos_type(raw["atmos_type"])
+    physics = raw.get("physics_mode")
+    physics = (
+        resolve_physics_mode(physics) if physics else default_physics_mode(atmos)
+    )
+    ozone = raw["ozone"] if "ozone" in raw else default_ozone(atmos)
+    extras = dict(raw.get("extras") or {})
+    for key in CONFIGURE_OPTIONAL_KEYS:
+        if key in raw:
+            extras[key] = raw[key]
+    extras.setdefault("ozone", ozone)
+    extras.setdefault("rotationperiod", 1.0)
+    extras.setdefault("synchronous", False)
+    return {
+        "atmos_type": atmos,
+        "physics_mode": physics,
+        "atmos_params": raw.get("atmos_params"),
+        "run_mode": raw.get("run_mode", default_run_mode),
+        "ozone": bool(ozone),
+        "extras": extras,
+    }
+
+
+def resolve_run_configs(raw_list, default_run_mode="normal"):
+    if not raw_list:
+        raise ValueError("RUN_CONFIGS is empty")
+    return [
+        resolve_run_config(item, default_run_mode=default_run_mode)
+        for item in raw_list
+    ]
+
+
 def apply_atmos_preset(params, atmos_type, overrides=None):
     """Write the preset's partial pressures onto params. Optional overrides on top."""
     key = resolve_atmos_type(atmos_type)
@@ -178,6 +259,99 @@ def apply_atmos_preset(params, atmos_type, overrides=None):
 def total_pressure_bar(params):
     """Surface pressure [bar] as the sum of configured partial pressures."""
     return float(sum(float(params.get(k, 0.0) or 0.0) for k in GAS_KEYS))
+
+
+# exo.Earthlike pins the top at 50 mbar for a ~1000 mbar surface (5%).
+EARTH_SURFACE_MBAR = 1000.0
+EARTH_MODELTOP_MBAR = 50.0
+# Near 1 bar, leave Model defaults (vtype=0, no pinned top) so n2/co2/mars
+# 1-bar runs do not change.
+COLUMN_NEAR_EARTH_BAR = (0.5, 2.0)
+# ExoPlaSim guidance: P < 0.1 bar or P > 10 bar often needs ~5 min steps.
+TIMESTEP_P_THIN_BAR = 0.1
+TIMESTEP_P_THICK_BAR = 10.0
+# Values that divide a 1440-minute day. 3 min is the pipeline floor.
+TIMESTEP_NICE_MIN = (45.0, 30.0, 15.0, 10.0, 5.0, 3.0)
+
+
+def column_setup(p_surf_bar, p_h2o_bar=None):
+    """Vertical grid and stability knobs for this surface pressure.
+
+    Empty if ~1 bar, so n2/co2/mars 1-bar runs keep Model defaults.
+
+    Thin (Mars 6.36 mbar): PlaSim's usual ~50 mbar top is *below* the
+    surface. Pin the top to 5% of P (vtype=4), flatten Earth orography
+    (mountains can exceed a thin column), and turn off evaporation if
+    the mix has no water.
+
+    Thick (Venus 92 bar): keep the lid near Earth's 50 mbar so the CO2
+    photosphere (~1 bar) stays in the domain. A 5% top would sit at
+    4.6 bar and cut that off. Use vtype=3 (pseudolog) so 10 layers can
+    span 92 bar → 50 mbar without dumping all the resolution at the
+    ground. Dry mix → drycore.
+    """
+    p_bar = float(p_surf_bar)
+    if p_bar <= 0.0:
+        raise ValueError("surface pressure must be positive")
+    lo, hi = COLUMN_NEAR_EARTH_BAR
+    if lo <= p_bar <= hi:
+        return {}
+    p_mbar = p_bar * 1000.0
+    extreme = p_bar < 0.05 or p_bar > 5.0
+    thin = p_bar < lo
+    if thin:
+        modeltop = min(p_mbar * (EARTH_MODELTOP_MBAR / EARTH_SURFACE_MBAR), 0.5 * p_mbar)
+        vtype = 4
+    else:
+        modeltop = min(EARTH_MODELTOP_MBAR, 0.5 * p_mbar)
+        vtype = 3
+    cfg = {
+        "vtype": vtype,
+        "modeltop": modeltop,
+        "pressurebroaden": not extreme,
+    }
+    if thin:
+        cfg["orography"] = 0.0
+    if extreme:
+        cfg["physicsfilter"] = "gp|exp|sp"
+    if p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
+        cfg["drycore"] = True
+    return cfg
+
+
+def timestep_pressure_factor(p_surf_bar):
+    """Scale Earth 45 min steps down away from ~1 bar.
+
+    Identity between 0.5 and 2 bar. At 6.36 mbar or 92 bar this is 5/45
+    (a 5 min first attempt before gravity and retries).
+    """
+    p_bar = float(p_surf_bar)
+    if p_bar <= 0.0:
+        raise ValueError("surface pressure must be positive")
+    lo, hi = COLUMN_NEAR_EARTH_BAR
+    if lo <= p_bar <= hi:
+        return 1.0
+    raw = min(1.0, p_bar / TIMESTEP_P_THIN_BAR, TIMESTEP_P_THICK_BAR / p_bar)
+    if raw >= 1.0:
+        return 1.0
+    return max(5.0 / 45.0, raw)
+
+
+def snap_timestep_min(minutes, floor=3.0):
+    """Largest nice timestep that is still <= minutes and >= floor."""
+    target = max(float(floor), float(minutes))
+    for dt in TIMESTEP_NICE_MIN:
+        if dt <= target + 1e-12:
+            return dt
+    return float(floor)
+
+
+def model_precision(p_surf_bar, default=4):
+    """4-byte is the usual default; 8-byte for very thick/thin columns."""
+    p_bar = float(p_surf_bar)
+    if p_bar < 0.05 or p_bar > 5.0:
+        return max(8, int(default))
+    return int(default)
 
 
 def co2_ppmv_from_params(params):

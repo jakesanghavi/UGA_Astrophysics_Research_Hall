@@ -7,11 +7,20 @@ photosynthesis limits.
 
 Set these in `run_model.py`:
 
-- `ATMOS_TYPE`, `ATMOS_PARAMS` — composition
-- `PHYSICS_MODE` — gascon / akap
-- `RUN_MODE` — `"normal"` (MSTARS × HZ) or `"mass_only"` (1 Msun, 1 AU)
+- `RUN_CONFIGS` — list of sweeps, run in order. Each entry has `atmos_type`
+  and may set `physics_mode`, `atmos_params`, `ozone`, `run_mode`.
+- `RUN_MODE` — default for entries that omit `run_mode`: `"normal"` (MSTARS ×
+  HZ) or `"mass_only"` (1 Msun, 1 AU)
 - `MASS_RATIOS` — `[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2]`. Demos may subset
   this in a throwaway script; leave the committed list alone.
+
+Omitted `physics_mode` is `other` for CO2-dominated presets (`co2`, `mars`,
+`venus_surface`, `mars_surface`) and `earth` for `n2` / `evolved`. Omitted
+`ozone` is off for those CO2 mixes and on for `n2` / `evolved`. Earth day
+(`rotationperiod=1`, `synchronous=False`) is always written unless the entry
+overrides it.
+
+Default `RUN_CONFIGS` is `venus_surface` then `mars_surface`.
 
 One `model_helpers.py` serves every mix. `model_helpers_n2.py` and
 `model_helpers_co2.py` are gone.
@@ -28,7 +37,7 @@ Two independent switches:
 
 | Switch | Where | What it changes |
 |---|---|---|
-| `ATMOS_TYPE` / `ATMOS_PARAMS` | composition | Partial pressures (`pN2`, `pCO2`, …). Whether leftover H/He is written on top. |
+| `ATMOS_TYPE` / `ATMOS_PARAMS` (per `RUN_CONFIGS` entry) | composition | Partial pressures (`pN2`, `pCO2`, …). Whether leftover H/He is written on top. |
 | `PHYSICS_MODE` | PlaSim gas constants | How `gascon` (R) and `akap` (κ = R/Cp) are set. |
 
 Venus-like and Mars-like air are both CO2-dominated. They differ in mix (and,
@@ -69,7 +78,9 @@ Venus vs Mars a composition comparison, not a 92 bar vs 6 mbar leap.
 `venus_surface` and `mars_surface` are opt-in; they are not production
 defaults and are not aliases of `venus` / `mars`.
 
-Production default in `run_model.py`: `ATMOS_TYPE = "n2"`, `PHYSICS_MODE = "earth"`.
+Default `RUN_CONFIGS` in `run_model.py`: `venus_surface` then `mars_surface`
+(each with `other` physics and ozone off). Earth reference is still `n2` +
+earth physics.
 
 ### Output file tags
 
@@ -167,5 +178,14 @@ reconstructed `GPP_light` from time-averaged factors will not match
   runnable, not calibrated.
 - Production `co2` / `mars` stay ~1 bar. Use `venus_surface` / `mars_surface`
   for 92 bar / 6.36 mbar.
+- Surface-P columns get extra configure knobs; ~1 bar mixes are unchanged.
+  `mars_surface` pins `modeltop` to 5% of P (`vtype=4`) so the lid is above
+  the 6.36 mbar surface, and sets `orography=0` (Earth mountains vs a thin
+  column). `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
+  (pseudolog) so the ~1 bar CO2 photosphere stays in the 10-layer domain; a
+  5% top would sit at 4.6 bar and cut that off. Dry mixes (`pH2O=0`) set
+  `drycore`. Extreme columns use 8-byte precision, turn off pressure
+  broadening, add `physicsfilter="gp|exp|sp"`, and start at a ~3–5 min
+  timestep instead of 45 min.
 - PlaSim + SIMBA is not bit-reproducible run to run. Compare distributions,
   not exact GPP.

@@ -76,7 +76,9 @@ runtime, is committed, so no copy step is needed.)
 
 ### Run modes and the Earth reference
 
-`run_model.py` has a `RUN_MODE` switch at the top:
+`run_model.py` has `RUN_MODE` and a `RUN_CONFIGS` list. Each list entry is one
+atmosphere sweep; they run in order (default: `venus_surface` then
+`mars_surface`).
 
 - `"normal"` — the full sweep over stellar masses (`MSTARS`) and each star's
   habitable-zone distances. Output: `16cpus_test_<mass>_normal_<atmos>.json`
@@ -150,13 +152,18 @@ zero-vegetation result (`[0.0, 0.0, ...]`). On a rerun, successfully-computed
 points are skipped but `null` (crashed) points are re-attempted.
 
 As a more deterministic stability aid, `calculate_veg` also scales the model
-timestep down with surface gravity (`BASE_TIMESTEP_MIN * g/g_earth`, floored at
-`MIN_TIMESTEP_MIN`) and halves it further on each retry. The physical reason:
-atmospheric scale height ∝ 1/gravity, and the surface-flux term that blows up
-has a lowest-layer height ∝ 1/gravity, so low-gravity planets need a finer step.
-Near-Earth-gravity planets are essentially unchanged (scale ≈ 1). This won't
-rescue the most extreme low-gravity/high-flux cases (which remain `null`), but it
-converts many borderline ones into clean successes.
+timestep down with surface gravity (`BASE_TIMESTEP_MIN * g/g_earth`) and with
+how far surface pressure is from 1 bar (identity between 0.5 and 2 bar; ~5 min
+at 92 bar, ~3 min at 6.36 mbar). Retries halve it again. The step is snapped
+to a 1440-minute-day divisor and floored at `MIN_TIMESTEP_MIN`. Low-g needs a
+finer step because scale height and the surface-flux lowest-layer height both
+go as 1/g. Extreme P needs a finer step because PlaSim's 45 min default is
+tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
+
+`venus_surface` / `mars_surface` also change the vertical grid: Mars lid at
+5% of P (the default 50 mbar lid is below a 6.36 mbar surface); Venus lid
+stays 50 mbar with `vtype=3` so the photosphere is still in the column.
+Thin columns flatten orography. Dry mixes set `drycore`.
 
 ## Cursor Cloud specific instructions
 
