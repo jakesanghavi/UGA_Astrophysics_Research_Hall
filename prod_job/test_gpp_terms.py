@@ -337,6 +337,15 @@ class TestRunConfigs(unittest.TestCase):
         self.assertEqual(cfg["run_mode"], "mass_only")
         self.assertEqual(cfg["extras"]["rotationperiod"], 243.0)
 
+    def test_column_overrides_pass_through(self):
+        cfg = ap.resolve_run_config({
+            "atmos_type": "mars_surface",
+            "orography": 0.5,
+            "drycore": False,
+        })
+        self.assertEqual(cfg["extras"]["orography"], 0.5)
+        self.assertFalse(cfg["extras"]["drycore"])
+
     def test_run_model_default_is_surface_sequence(self):
         path = os.path.join(os.path.dirname(__file__), "run_model.py")
         with open(path) as handle:
@@ -367,25 +376,47 @@ class TestColumnSetup(unittest.TestCase):
         self.assertEqual(ap.column_setup(1.0), {})
         self.assertEqual(ap.column_setup(ap.total_pressure_bar(ap.VENUSLIKE_GASES)), {})
         self.assertEqual(ap.model_precision(1.0), 4)
+        self.assertEqual(ap.timestep_pressure_factor(1.0), 1.0)
 
     def test_mars_surface_top_below_surface(self):
         p = ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"])
-        cfg = ap.column_setup(p)
+        cfg = ap.column_setup(p, p_h2o_bar=0.0)
         self.assertLess(p * 1000.0, 50.0)
         self.assertEqual(cfg["vtype"], 4)
         self.assertLess(cfg["modeltop"], p * 1000.0)
         self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=5)
+        self.assertEqual(cfg["orography"], 0.0)
+        self.assertTrue(cfg["drycore"])
         self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")
         self.assertEqual(ap.model_precision(p), 8)
+        self.assertAlmostEqual(ap.timestep_pressure_factor(p), 5.0 / 45.0, places=5)
 
-    def test_venus_surface_top_scales_with_p(self):
+    def test_venus_surface_keeps_earth_lid(self):
         p = ap.total_pressure_bar(ap.PRESETS["venus_surface"]["gases"])
-        cfg = ap.column_setup(p)
-        self.assertEqual(cfg["vtype"], 4)
-        self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=3)
-        self.assertGreater(cfg["modeltop"], 50.0)
+        cfg = ap.column_setup(p, p_h2o_bar=0.0)
+        self.assertEqual(cfg["vtype"], 3)
+        self.assertAlmostEqual(cfg["modeltop"], 50.0, places=5)
+        self.assertLess(cfg["modeltop"], p * 1000.0)
+        self.assertNotIn("orography", cfg)
+        self.assertTrue(cfg["drycore"])
         self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")
         self.assertEqual(ap.model_precision(p), 8)
+        self.assertAlmostEqual(ap.timestep_pressure_factor(p), 5.0 / 45.0, places=5)
+
+    def test_wet_thick_column_does_not_force_drycore(self):
+        cfg = ap.column_setup(92.0, p_h2o_bar=0.01)
+        self.assertNotIn("drycore", cfg)
+        self.assertEqual(cfg["vtype"], 3)
+        self.assertAlmostEqual(cfg["modeltop"], 50.0, places=5)
+
+    def test_snap_timestep(self):
+        self.assertEqual(ap.snap_timestep_min(45.0), 45.0)
+        self.assertEqual(ap.snap_timestep_min(11.0), 10.0)
+        self.assertEqual(ap.snap_timestep_min(4.9), 3.0)
+        self.assertEqual(ap.snap_timestep_min(5.0), 5.0)
+        self.assertEqual(ap.snap_timestep_min(2.0, floor=3.0), 3.0)
 
 
 class TestDiagnosticCli(unittest.TestCase):

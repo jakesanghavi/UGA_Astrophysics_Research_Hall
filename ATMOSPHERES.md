@@ -178,10 +178,14 @@ reconstructed `GPP_light` from time-averaged factors will not match
   runnable, not calibrated.
 - Production `co2` / `mars` stay ~1 bar. Use `venus_surface` / `mars_surface`
   for 92 bar / 6.36 mbar.
-- Those surface-P runs pin `modeltop` to 5% of surface pressure (`vtype=4`),
-  the same ratio as ExoPlaSim's Earthlike 50 mbar / 1 bar. Leaving the default
-  ~50 mbar top puts it **below** a 6.36 mbar Mars surface and stretches 10
-  layers from 92 bar to 50 mbar. ~1 bar mixes are unchanged. Extreme columns
-  also use 8-byte precision and turn off pressure broadening.
+- Surface-P columns get extra configure knobs; ~1 bar mixes are unchanged.
+  `mars_surface` pins `modeltop` to 5% of P (`vtype=4`) so the lid is above
+  the 6.36 mbar surface, and sets `orography=0` (Earth mountains vs a thin
+  column). `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
+  (pseudolog) so the ~1 bar CO2 photosphere stays in the 10-layer domain; a
+  5% top would sit at 4.6 bar and cut that off. Dry mixes (`pH2O=0`) set
+  `drycore`. Extreme columns use 8-byte precision, turn off pressure
+  broadening, add `physicsfilter="gp|exp|sp"`, and start at a ~3–5 min
+  timestep instead of 45 min.
 - PlaSim + SIMBA is not bit-reproducible run to run. Compare distributions,
   not exact GPP.

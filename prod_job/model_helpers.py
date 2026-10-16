@@ -14,8 +14,10 @@ from atmos_presets import (
     model_precision,
     resolve_atmos_type,
     resolve_physics_mode,
+    snap_timestep_min,
     sweep_json_name,
     thermo_from_params,
+    timestep_pressure_factor,
     total_pressure_bar,
 )
 from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
@@ -49,10 +51,10 @@ WORKERS = int(os.environ.get("EXOPLASIM_WORKERS", "2"))
 MAX_RETRIES = 2
 
 # Model timestep in minutes. ExoPlaSim's T21 default is 45 min, tuned for
-# Earth's gravity. Low-gravity planets have a larger atmospheric scale height
-# and need a finer step for numerical stability, so calculate_veg scales this
-# down with surface gravity (and shrinks it further on each retry), floored at
-# MIN_TIMESTEP_MIN so runs don't become absurdly slow.
+# Earth's gravity and ~1 bar. Low-gravity planets have a larger atmospheric
+# scale height, and P far from 1 bar (92 bar / 6 mbar) also needs a finer
+# step. calculate_veg scales with g and with P, then halves on each retry,
+# floored at MIN_TIMESTEP_MIN and snapped to a 1440-minute-day divisor.
 BASE_TIMESTEP_MIN = 45.0
 MIN_TIMESTEP_MIN = 3.0
 G_EARTH = 9.80665
@@ -169,10 +171,12 @@ def planet_bulk(mass_ratio):
     return {"radius": radius, "gravity": gravity}
 
 
-def planet_timestep(gravity, attempt=0):
-    """PlaSim timestep [min], scaled down with g and halved on each crash retry."""
-    base = max(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * min(1.0, gravity / G_EARTH))
-    return max(MIN_TIMESTEP_MIN, base / (2 ** attempt))
+def planet_timestep(gravity, attempt=0, p_surf_bar=1.0):
+    """PlaSim timestep [min], scaled with g and P, halved on each crash retry."""
+    g_factor = min(1.0, gravity / G_EARTH)
+    p_factor = timestep_pressure_factor(p_surf_bar)
+    dt = BASE_TIMESTEP_MIN * g_factor * p_factor / (2 ** attempt)
+    return snap_timestep_min(dt, floor=MIN_TIMESTEP_MIN)
 
 
 def planet_starlight(mstar, au):
@@ -498,7 +502,8 @@ def calculate_veg(
 
     model_kwargs = apply_physics_mode(local_params, physics_mode)
     p_surf = total_pressure_bar(local_params)
-    for key, value in column_setup(p_surf).items():
+    p_h2o = float(local_params.get("pH2O", 0.0) or 0.0)
+    for key, value in column_setup(p_surf, p_h2o_bar=p_h2o).items():
         local_params.setdefault(key, value)
     run_precision = model_precision(p_surf, default=PRECISION)
     thermo = thermo_from_params(local_params)
@@ -506,6 +511,8 @@ def calculate_veg(
         f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
         f"P={p_surf:.5g} bar modeltop={local_params.get('modeltop', 'default')} "
         f"vtype={local_params.get('vtype', 'default')} "
+        f"orography={local_params.get('orography', 'default')} "
+        f"drycore={local_params.get('drycore', False)} "
         f"precision={run_precision} "
         f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
         f"akap={thermo['akap']:.4f} (earth mode leaves akap=0.286; "
@@ -528,7 +535,9 @@ def calculate_veg(
     for attempt in range(MAX_RETRIES + 1):
         # Halve the timestep on each retry (down to the floor); a finer step is a
         # more deterministic stability fix than reseeding alone.
-        local_params['timestep'] = planet_timestep(g_new, attempt=attempt)
+        local_params['timestep'] = planet_timestep(
+            g_new, attempt=attempt, p_surf_bar=p_surf
+        )
         try:
             shutil.rmtree(f"custom_earthlike_model{to_append}")
             shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
@@ -573,7 +582,9 @@ def calculate_veg(
             break  # success
 
         if attempt < MAX_RETRIES:
-            next_dt = planet_timestep(g_new, attempt=attempt + 1)
+            next_dt = planet_timestep(
+                g_new, attempt=attempt + 1, p_surf_bar=p_surf
+            )
             print(f"[calculate_veg] run crashed (mass={mass_ratio}, mstar={mstar}, "
                   f"au={au}); retrying with a new seed and timestep={next_dt:.1f} min "
                   f"({attempt + 1}/{MAX_RETRIES})")

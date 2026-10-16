@@ -56,13 +56,17 @@ Per-config optional keys: `physics_mode`, `atmos_params`, `ozone`, `run_mode`,
 `evolved`. Earth day is written unless overridden.
 
 Gravity, radius, timestep, and (for `evolved`) leftover H/He still follow
-planet mass inside `calculate_veg`.
+planet mass inside `calculate_veg`. Timestep also shrinks when surface P is
+far from 1 bar (about 5 min at 92 bar, 3 min at 6.36 mbar, then halved on
+crash retries).
 
 `co2` and `mars` are ~1 bar mixes. Use `venus_surface` (92 bar) or
 `mars_surface` (6.36 mbar) only when you want those surface pressures.
-Those two pin `modeltop` to 5% of surface P so PlaSim's Earth ~50 mbar top
-is not used (that top is below a 6.36 mbar surface). First extreme-P run
-compiles an 8-byte binary.
+`mars_surface` pins the lid to 5% of P; `venus_surface` keeps Earth's 50 mbar
+lid with log-ish layers so the photosphere stays in the domain. Dry mixes
+turn off evaporation (`drycore`). First extreme-P run compiles an 8-byte
+binary. Delete the old `*_crashed/` workdirs (or just rerun — the driver
+already removes them per attempt). JSON `null` points are retried.
 
 `physics_mode="mars"` is for actual Mars, not a Mars-composition planet at
 1 AU. For Venus- or Mars-like air around a Sun-like star use `other`.
