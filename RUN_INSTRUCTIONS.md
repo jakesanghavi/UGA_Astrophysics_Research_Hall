@@ -121,32 +121,32 @@ a `run_model.py` sweep.
 
 `16cpus_test_<mass><tag>.json` in `prod_job/`. Mass in the name is
 `str(mass).replace(".", "")` (`0.1` → `01`, `1.0` → `10`, `1.5` → `15`).
+T21 has no resolution suffix; T42 is `_T42` before `.json`.
 
 | Mix / physics | `normal` tag | `mass_only` tag |
 |---|---|---|
-| `n2` + earth | `_normal_n2` | `_massonly2` |
-| anything else, earth physics | `_normal_<atmos>` | `_massonly_<atmos>` |
-| anything else, other physics | `_normal_<atmos>_<physics>` | `_massonly_<atmos>_<physics>` |
+| earth physics | `_normal_<atmos>` | `_massonly_<atmos>` |
+| other / mars physics | `_normal_<atmos>_<physics>` | `_massonly_<atmos>_<physics>` |
 
-Examples: `16cpus_test_10_normal_n2.json`, `16cpus_test_15_massonly_co2_other.json`.
+Examples: `16cpus_test_10_normal_n2.json`, `16cpus_test_10_massonly_n2.json`,
+`16cpus_test_15_massonly_co2_other.json`. Older `_massonly2` / `_massonly`
+files are still read as `n2` + earth.
 
 Existing successful points are skipped. JSON `null` vegetation means a crash;
 those points are retried. `0.0` is a real zero-vegetation result.
 
 ## Plotting a production sweep
 
-`plot_veg_by_params.py` reads the per-mass JSON files. The filename tag is
-`_massonly` or `_normal` plus `EXTENSION`. Set those to match the table above:
-
-| Files | `MASS_ONLY` | `EXTENSION` |
-|---|---|---|
-| `_massonly2` (`n2` + earth) | `True` | `"2"` |
-| `_normal_n2` (`n2` + earth) | `False` | `"_n2"` |
-| `_massonly_co2_other` | `True` | `"_co2_other"` |
-| `_normal_mars_other` | `False` | `"_mars_other"` |
+`plot_veg_by_params.py` discovers every `16cpus_test_*.json` in `--dir`
+(default: cwd), groups by (mode, atmos, physics, resolution), and writes
+`gpp_<mode>_<atmos>_<physics>[_<res>][_scale].png`. Baseline is
+`earth_reference.json`. Masses, M*, and AU come from the files.
 
 ```bash
 python plot_veg_by_params.py
+python plot_veg_by_params.py --list
+python plot_veg_by_params.py --atmos n2 --mode mass_only
+python plot_veg_by_params.py --atmos co2 --physics other --mode normal
 ```
 
 ## GPP diagnostic (not the production sweep)

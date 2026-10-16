@@ -6,8 +6,7 @@ from time import time, strftime, gmtime
 # "normal"    : full sweep over stellar masses (MSTARS in model_helpers) and
 #               each star's habitable-zone distances.
 # "mass_only" : vary planet mass only; every planet is placed at 1 AU around a
-#               1 solar-mass star. Output files get a "_massonly" tag so they are
-#               easy to distinguish from a normal run.
+#               1 solar-mass star. Output files get a "_massonly_<atmos>" tag.
 # RUN_MODE = "mass_only"
 RUN_MODE = "normal"
 
