@@ -8,6 +8,7 @@ Run from prod_job/:
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import os
@@ -291,6 +292,74 @@ class TestThermoAndPhysics(unittest.TestCase):
             ap.regime_file_tag("normal", "mars_surface", "other"),
             "_normal_mars_surface_other",
         )
+
+
+class TestRunConfigs(unittest.TestCase):
+    def test_surface_defaults_other_and_no_ozone(self):
+        vs = ap.resolve_run_config("venus_surface")
+        self.assertEqual(vs["atmos_type"], "venus_surface")
+        self.assertEqual(vs["physics_mode"], "other")
+        self.assertFalse(vs["ozone"])
+        self.assertEqual(vs["extras"]["rotationperiod"], 1.0)
+        self.assertFalse(vs["extras"]["synchronous"])
+        ms = ap.resolve_run_config({"atmos_type": "mars_surface"})
+        self.assertEqual(ms["physics_mode"], "other")
+        self.assertFalse(ms["ozone"])
+
+    def test_n2_keeps_earth_physics_and_ozone(self):
+        cfg = ap.resolve_run_config({"atmos_type": "n2"})
+        self.assertEqual(cfg["physics_mode"], "earth")
+        self.assertTrue(cfg["ozone"])
+        self.assertTrue(cfg["extras"]["ozone"])
+
+    def test_overnight_sequence_order(self):
+        cfgs = ap.resolve_run_configs(["venus_surface", "mars_surface"])
+        self.assertEqual(
+            [c["atmos_type"] for c in cfgs],
+            ["venus_surface", "mars_surface"],
+        )
+        self.assertEqual(cfgs[0]["run_mode"], "normal")
+
+    def test_empty_list_rejected(self):
+        with self.assertRaises(ValueError):
+            ap.resolve_run_configs([])
+
+    def test_overrides(self):
+        cfg = ap.resolve_run_config({
+            "atmos_type": "co2",
+            "physics_mode": "earth",
+            "ozone": True,
+            "run_mode": "mass_only",
+            "rotationperiod": 243.0,
+        })
+        self.assertEqual(cfg["physics_mode"], "earth")
+        self.assertTrue(cfg["ozone"])
+        self.assertEqual(cfg["run_mode"], "mass_only")
+        self.assertEqual(cfg["extras"]["rotationperiod"], 243.0)
+
+    def test_run_model_default_is_surface_sequence(self):
+        path = os.path.join(os.path.dirname(__file__), "run_model.py")
+        with open(path) as handle:
+            tree = ast.parse(handle.read(), filename=path)
+        raw = None
+        mode = None
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if "RUN_CONFIGS" in names:
+                raw = ast.literal_eval(node.value)
+            if "RUN_MODE" in names:
+                mode = ast.literal_eval(node.value)
+        self.assertEqual(raw, [
+            {"atmos_type": "venus_surface"},
+            {"atmos_type": "mars_surface"},
+        ])
+        cfgs = ap.resolve_run_configs(raw, default_run_mode=mode)
+        self.assertEqual(cfgs[0]["physics_mode"], "other")
+        self.assertEqual(cfgs[1]["physics_mode"], "other")
+        self.assertFalse(cfgs[0]["ozone"])
+        self.assertFalse(cfgs[1]["ozone"])
 
 
 class TestDiagnosticCli(unittest.TestCase):

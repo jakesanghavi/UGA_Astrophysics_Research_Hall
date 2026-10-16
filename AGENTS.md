@@ -76,7 +76,9 @@ runtime, is committed, so no copy step is needed.)
 
 ### Run modes and the Earth reference
 
-`run_model.py` has a `RUN_MODE` switch at the top:
+`run_model.py` has `RUN_MODE` and a `RUN_CONFIGS` list. Each list entry is one
+atmosphere sweep; they run in order (default: `venus_surface` then
+`mars_surface`).
 
 - `"normal"` — the full sweep over stellar masses (`MSTARS`) and each star's
   habitable-zone distances. Output: `16cpus_test_<mass>_normal_<atmos>.json`

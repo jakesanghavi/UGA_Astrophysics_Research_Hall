@@ -9,6 +9,7 @@ from atmos_presets import (
     apply_atmos_preset,
     apply_physics_mode,
     co2_ppmv_from_params,
+    default_ozone,
     resolve_atmos_type,
     resolve_physics_mode,
     sweep_json_name,
@@ -156,6 +157,34 @@ def piecewise_radius_estimate(mass_ratio):
 
 def radius_noack(m_p):
     return 1000*((7030 - 1840 * X_fe)*(m_p)**0.282)/rearth
+
+
+def planet_bulk(mass_ratio):
+    """Gravity and radius for one planet mass (Noack mass-radius)."""
+    radius = radius_noack(mass_ratio)
+    gravity = G_EARTH * mass_ratio / (radius ** 2)
+    return {"radius": radius, "gravity": gravity}
+
+
+def planet_timestep(gravity, attempt=0):
+    """PlaSim timestep [min], scaled down with g and halved on each crash retry."""
+    base = max(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * min(1.0, gravity / G_EARTH))
+    return max(MIN_TIMESTEP_MIN, base / (2 ** attempt))
+
+
+def planet_starlight(mstar, au):
+    """Stellar Teff and TOA flux for this (M*, AU)."""
+    startemp, flux = stellar_mass_to_temp_flux(mstar, au)
+    return {"startemp": startemp, "flux": flux}
+
+
+def planet_configure_extras(atmos_type, configure_kwargs=None):
+    """Earth-day defaults plus ozone for the mix; config may override."""
+    extras = dict(configure_kwargs or {})
+    extras.setdefault("ozone", default_ozone(atmos_type))
+    extras.setdefault("rotationperiod", 1.0)
+    extras.setdefault("synchronous", False)
+    return extras
 
 def cmf_noack():
     return (X_fe - X_fe_m)/(1-X_fe_m)
@@ -394,10 +423,13 @@ def calculate_veg(
     physics_mode=None,
     atmos_params=None,
     diagnostics=False,
+    configure_kwargs=None,
 ):
-    r_new = radius_noack(mass_ratio)
-    g_new = 9.80665 * mass_ratio / (r_new ** 2)
-    startemp, flux = stellar_mass_to_temp_flux(mstar, au)
+    bulk = planet_bulk(mass_ratio)
+    r_new = bulk["radius"]
+    g_new = bulk["gravity"]
+    light = planet_starlight(mstar, au)
+    startemp, flux = light["startemp"], light["flux"]
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
 
@@ -415,9 +447,9 @@ def calculate_veg(
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
-    # local_params['flux'] = BASE_FLUX / (au**2)
     local_params['startemp'] = startemp
     local_params['flux'] = flux
+    local_params.update(planet_configure_extras(atmos_type, configure_kwargs))
     
     if preset["apply_hhe"]:
         CMF = cmf_noack()
@@ -476,11 +508,6 @@ def calculate_veg(
     # scheduler spread them across all cores. Single-run behavior is unchanged.
     mpi_opts = "--bind-to none" if WORKERS > 1 else None
 
-    # Low-gravity planets have a larger atmospheric scale height and need a finer
-    # timestep to stay numerically stable, so scale the Earth-tuned default down
-    # with surface gravity (capped at the default, floored so runs stay tractable).
-    base_timestep = max(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * min(1.0, g_new / G_EARTH))
-
     # Low-gravity planets (especially at high insolation) can still hit an
     # intermittent, weather- (and therefore seed-) dependent numerical
     # instability in PlaSim's surface-flux scheme ("negative z/z0"). Retry a
@@ -491,7 +518,7 @@ def calculate_veg(
     for attempt in range(MAX_RETRIES + 1):
         # Halve the timestep on each retry (down to the floor); a finer step is a
         # more deterministic stability fix than reseeding alone.
-        local_params['timestep'] = max(MIN_TIMESTEP_MIN, base_timestep / (2 ** attempt))
+        local_params['timestep'] = planet_timestep(g_new, attempt=attempt)
         try:
             shutil.rmtree(f"custom_earthlike_model{to_append}")
             shutil.rmtree(f"custom_earthlike_model_crashed{to_append}")
@@ -536,7 +563,7 @@ def calculate_veg(
             break  # success
 
         if attempt < MAX_RETRIES:
-            next_dt = max(MIN_TIMESTEP_MIN, base_timestep / (2 ** (attempt + 1)))
+            next_dt = planet_timestep(g_new, attempt=attempt + 1)
             print(f"[calculate_veg] run crashed (mass={mass_ratio}, mstar={mstar}, "
                   f"au={au}); retrying with a new seed and timestep={next_dt:.1f} min "
                   f"({attempt + 1}/{MAX_RETRIES})")
@@ -588,7 +615,7 @@ def calculate_veg(
 
 
 def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
-                    physics_mode=None, atmos_params=None):
+                    physics_mode=None, atmos_params=None, configure_kwargs=None):
     """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
     return calculate_veg(
         mass_ratio,
@@ -600,16 +627,18 @@ def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_typ
         physics_mode=physics_mode,
         atmos_params=atmos_params,
         diagnostics=True,
+        configure_kwargs=configure_kwargs,
     )
 
 
 def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
-                atmos_type, physics_mode, atmos_params):
+                atmos_type, physics_mode, atmos_params, configure_kwargs=None):
     """Compute a single grid point. Runs inside a worker process for isolation
     (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
     veg_amt = calculate_veg(
         mass_ratio, mstar, au, resolution, workdir_suffix,
         atmos_type=atmos_type, physics_mode=physics_mode, atmos_params=atmos_params,
+        configure_kwargs=configure_kwargs,
     )
     flux = stellar_mass_to_temp_flux(mstar, au)
     veg_amt.append(flux[0])
@@ -620,7 +649,8 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
 
 
 def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
-              atmos_type=None, physics_mode=None, atmos_params=None):
+              atmos_type=None, physics_mode=None, atmos_params=None,
+              configure_kwargs=None):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
     points        : explicit list of (mstar, au) tuples to evaluate. If None
@@ -633,6 +663,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     atmos_type    : composition preset (see ATMOSPHERES.md).
     physics_mode  : earth / mars / other.
     atmos_params  : optional partial-pressure overrides on the preset.
+    configure_kwargs : extra exo.Model.configure() kwargs (ozone, rotationperiod, …).
     """
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
@@ -662,7 +693,8 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             continue
         # Unique workdir per task so concurrent runs never share a directory.
         safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
-        workdir_suffix = f"{res_suffix}_{atmos_type}_{physics_mode}_{safe}"
+        res_tag = "" if resolution == "T21" else f"{resolution}_"
+        workdir_suffix = f"{res_tag}{atmos_type}_{physics_mode}_{safe}"
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:
@@ -680,7 +712,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     try:
         _save(ms, au_key, _grid_point(
             mass_ratio, mstar, au, resolution, workdir_suffix,
-            atmos_type, physics_mode, atmos_params,
+            atmos_type, physics_mode, atmos_params, configure_kwargs,
         ))
     except Exception as e:
         print(f"Error! ({ms}, {au_key}): {e}")
@@ -694,7 +726,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             try:
                 _save(ms, au_key, _grid_point(
                     mass_ratio, mstar, au, resolution, workdir_suffix,
-                    atmos_type, physics_mode, atmos_params,
+                    atmos_type, physics_mode, atmos_params, configure_kwargs,
                 ))
             except Exception as e:
                 print(f"Error! ({ms}, {au_key}): {e}")
@@ -705,7 +737,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         future_map = {
             pool.submit(
                 _grid_point, mass_ratio, mstar, au, resolution, workdir_suffix,
-                atmos_type, physics_mode, atmos_params,
+                atmos_type, physics_mode, atmos_params, configure_kwargs,
             ): (ms, au_key)
             for ms, au_key, mstar, au, workdir_suffix in remaining
         }

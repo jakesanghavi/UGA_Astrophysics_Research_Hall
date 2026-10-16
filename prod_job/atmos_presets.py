@@ -162,6 +162,81 @@ def resolve_physics_mode(physics_mode):
     return physics_mode
 
 
+# n2 / evolved keep Earth ozone and earth physics unless a config overrides.
+EARTHLIKE_ATMOS = ("n2", "evolved")
+
+# Extra ExoPlaSim configure() keys a RUN_CONFIGS entry may set.
+CONFIGURE_OPTIONAL_KEYS = (
+    "rotationperiod",
+    "synchronous",
+    "obliquity",
+    "eccentricity",
+    "fixedorbit",
+    "year",
+    "desertplanet",
+    "aquaplanet",
+    "vegetation",
+    "wetsoil",
+    "ozone",
+)
+
+
+def default_physics_mode(atmos_type):
+    """earth for N2/O2 mixes; other for CO2-dominated air (not p_mars.f90)."""
+    atmos = resolve_atmos_type(atmos_type)
+    if atmos in EARTHLIKE_ATMOS:
+        return "earth"
+    return "other"
+
+
+def default_ozone(atmos_type):
+    """Earth ozone only for O2-bearing mixes."""
+    return resolve_atmos_type(atmos_type) in EARTHLIKE_ATMOS
+
+
+def resolve_run_config(raw, default_run_mode="normal"):
+    """Fill physics, ozone, and Earth-day extras for one sweep.
+
+    `raw` is an atmos name or a dict with at least `atmos_type`. Optional keys:
+    `run_mode`, `physics_mode`, `atmos_params`, `ozone`, plus
+    CONFIGURE_OPTIONAL_KEYS, or `extras` for any other configure() kwargs.
+    """
+    if isinstance(raw, str):
+        raw = {"atmos_type": raw}
+    if not isinstance(raw, dict) or "atmos_type" not in raw:
+        raise ValueError(f"run config needs atmos_type; got {raw!r}")
+    atmos = resolve_atmos_type(raw["atmos_type"])
+    physics = raw.get("physics_mode")
+    physics = (
+        resolve_physics_mode(physics) if physics else default_physics_mode(atmos)
+    )
+    ozone = raw["ozone"] if "ozone" in raw else default_ozone(atmos)
+    extras = dict(raw.get("extras") or {})
+    for key in CONFIGURE_OPTIONAL_KEYS:
+        if key in raw:
+            extras[key] = raw[key]
+    extras.setdefault("ozone", ozone)
+    extras.setdefault("rotationperiod", 1.0)
+    extras.setdefault("synchronous", False)
+    return {
+        "atmos_type": atmos,
+        "physics_mode": physics,
+        "atmos_params": raw.get("atmos_params"),
+        "run_mode": raw.get("run_mode", default_run_mode),
+        "ozone": bool(ozone),
+        "extras": extras,
+    }
+
+
+def resolve_run_configs(raw_list, default_run_mode="normal"):
+    if not raw_list:
+        raise ValueError("RUN_CONFIGS is empty")
+    return [
+        resolve_run_config(item, default_run_mode=default_run_mode)
+        for item in raw_list
+    ]
+
+
 def apply_atmos_preset(params, atmos_type, overrides=None):
     """Write the preset's partial pressures onto params. Optional overrides on top."""
     key = resolve_atmos_type(atmos_type)

@@ -39,16 +39,24 @@ Keep `WORKERS * NCPUS <=` cores. Local defaults in `model_helpers.py` are
 
 Edit the constants at the top. Then `python run_model.py`.
 
+`RUN_CONFIGS` is a list. Each entry runs a full mass sweep, then the next
+entry starts. Default is `venus_surface` then `mars_surface` (overnight:
+92 bar Venus mix, then 6.36 mbar Mars mix). Earth reference still runs once
+first (`n2`, earth physics).
+
 | Switch | Values | Effect |
 |---|---|---|
-| `RUN_MODE` | `"normal"` / `"mass_only"` | Full `MSTARS` × HZ distances, or one planet at 1 AU around 1 M⊙ |
-| `ATMOS_TYPE` | `n2`, `co2`, `mars`, `evolved`, `venus_surface`, `mars_surface` | Composition. Aliases: `earth`→`n2`, `venus`→`co2` |
-| `ATMOS_PARAMS` | `None` or a dict of partial pressures | Overlay on the preset, e.g. `{"pCO2": 0.965, "pN2": 0.035}` |
-| `PHYSICS_MODE` | `earth` / `mars` / `other` | PlaSim `gascon` / `akap`. `mars` also compiles `p_mars.f90` (calendar, ozone, soil, orbit) |
+| `RUN_MODE` | `"normal"` / `"mass_only"` | Default for entries that omit `run_mode`: full `MSTARS` × HZ, or 1 AU / 1 M⊙ |
+| `RUN_CONFIGS` | list of atmos names or dicts | One sweep per entry, in order. Required key: `atmos_type` |
 | `MASS_RATIOS` | `[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2]` | Planet masses in M⊕. Leave the committed list alone; subset only in a throwaway script |
 
-Production default: `RUN_MODE = "normal"`, `ATMOS_TYPE = "n2"`,
-`PHYSICS_MODE = "earth"`, `ATMOS_PARAMS = None`.
+Per-config optional keys: `physics_mode`, `atmos_params`, `ozone`, `run_mode`,
+`rotationperiod`, `synchronous`, `obliquity`, `extras`. Omitted physics/ozone:
+`other` and no ozone for CO2-dominated presets; `earth` and ozone for `n2` /
+`evolved`. Earth day is written unless overridden.
+
+Gravity, radius, timestep, and (for `evolved`) leftover H/He still follow
+planet mass inside `calculate_veg`.
 
 `co2` and `mars` are ~1 bar mixes. Use `venus_surface` (92 bar) or
 `mars_surface` (6.36 mbar) only when you want those surface pressures.
@@ -65,57 +73,38 @@ Every `run_model.py` invocation first writes `earth_reference.json`: 1 M⊕ at
 
 ## Typical specs
 
-Earth-like production sweep (committed defaults):
+Default overnight (committed):
 
 ```
-RUN_MODE = "normal"
-ATMOS_TYPE = "n2"
-PHYSICS_MODE = "earth"
+RUN_CONFIGS = [
+    {"atmos_type": "venus_surface"},
+    {"atmos_type": "mars_surface"},
+]
 ```
 
-Same planets, mass only (1 M⊙, 1 AU):
+Earth-like only:
+
+```
+RUN_CONFIGS = [{"atmos_type": "n2"}]
+```
+
+Mass only (1 M⊙, 1 AU), Venus-like 1 bar then Mars-like 1 bar:
 
 ```
 RUN_MODE = "mass_only"
-ATMOS_TYPE = "n2"
-PHYSICS_MODE = "earth"
-```
-
-Venus-like mix at ~1 bar, Earth gravity constants off, `akap` from the mix:
-
-```
-RUN_MODE = "normal"          # or "mass_only"
-ATMOS_TYPE = "co2"           # alias: "venus"
-PHYSICS_MODE = "other"
-```
-
-Mars-like mix at ~1 bar, same physics choice:
-
-```
-ATMOS_TYPE = "mars"
-PHYSICS_MODE = "other"
-```
-
-True Venus / Mars surface pressure (not the production comparison):
-
-```
-ATMOS_TYPE = "venus_surface"   # 92 bar
-# or
-ATMOS_TYPE = "mars_surface"    # 6.36 mbar
-PHYSICS_MODE = "other"
+RUN_CONFIGS = ["co2", "mars"]
 ```
 
 Evolved H/He leftover on an Earth mix:
 
 ```
-ATMOS_TYPE = "evolved"
-PHYSICS_MODE = "earth"
+RUN_CONFIGS = [{"atmos_type": "evolved"}]
 ```
 
 `EXOPLASIM_ATMOS` and `EXOPLASIM_PHYSICS` set `model_helpers` defaults when
 the caller does not pass `atmos_type` / `physics_mode`. `run_model.py` always
-passes its own `ATMOS_TYPE` / `PHYSICS_MODE`, so those env vars do not change
-a `run_model.py` sweep.
+passes each config's mix, so those env vars do not change a `run_model.py`
+sweep.
 
 ## Output files
 
