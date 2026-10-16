@@ -170,8 +170,8 @@ python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
 
 Rate charts (`gpp_rates_by_atmos.png`, `gpp_rate_regime_bars.png`) omit
 crashed points. `gpp_water_dln_attribution.png` and `gpp_preset_knobs.png`
-include `venus_surface` / `mars_surface` even without a GCM year (plotter
-attaches stubs; `--no-surface-stubs` to skip).
+include Earth (green X) and `venus_surface` / `mars_surface` even without
+a GCM year. `--no-surface-stubs` skips the two surface-P stubs.
 
 ```bash
 python run_gpp_diagnostics.py --atmos venus_surface,mars_surface --masses 1 \

@@ -33,6 +33,8 @@ from atmos_presets import (
 
 # Plot-time stubs for columns that crash before vegppw exists.
 SURFACE_STUB_ATMOS = ("venus_surface", "mars_surface")
+# Earth (n2) plus the two surface-P extremes, for the knobs comparison.
+COMPARISON_PRESET_ATMOS = ("n2",) + SURFACE_STUB_ATMOS
 COLUMN_RECORD_KEYS = (
     "modeltop", "vtype", "drycore", "orography",
     "pressurebroaden", "physicsfilter",
@@ -299,11 +301,12 @@ def preset_only_record(
     return record
 
 
-def attach_surface_preset_records(records, atmos=SURFACE_STUB_ATMOS):
-    """Add venus_surface / mars_surface stubs on the same (mass, M*, AU) grid.
+def attach_surface_preset_records(records, atmos=COMPARISON_PRESET_ATMOS):
+    """Add Earth (n2) and venus_surface / mars_surface stubs on the same grid.
 
     GPP charts skip crashed points. Knob and water-budget charts use P / plant
-    CO2 / β / column fields, which do not need a year.
+    CO2 / β / column fields, which do not need a year. n2 is skipped when a
+    live Earth point already exists at that (mass, M*, AU).
     """
     from atmos_presets import default_physics_mode
 

@@ -276,6 +276,23 @@ class TestAttribution(unittest.TestCase):
         again = gt.attach_surface_preset_records(attached)
         self.assertEqual(len(again), len(attached))
 
+    def test_attach_adds_earth_when_only_co2(self):
+        live = gt.base_record(
+            mass_ratio=1.0, mstar=1.0, au=1.0, atmos_type="co2",
+            params=dict(ap.VENUSLIKE_GASES),
+        )
+        live["crashed"] = False
+        live["gpp"] = 1.0
+        attached = gt.attach_surface_preset_records([live])
+        names = {rec["atmos"] for rec in attached}
+        self.assertEqual(names, {"n2", "co2", "venus_surface", "mars_surface"})
+        earth = [rec for rec in attached if rec["atmos"] == "n2"][0]
+        self.assertTrue(earth["preset_only"])
+        self.assertAlmostEqual(
+            earth["p_total_bar"], ap.total_pressure_bar(ap.EARTHLIKE_GASES),
+            places=6,
+        )
+
     def test_backfill_crashed_surface_record(self):
         rec = gt.base_record(
             mass_ratio=1.0, mstar=1.0, au=1.0,
@@ -657,6 +674,15 @@ class TestPlotter(unittest.TestCase):
             by_atmos = plotter.grouped(prepared)
             self.assertIn("venus_surface", by_atmos)
             self.assertIn("mars_surface", by_atmos)
+            self.assertEqual(plotter.knob_label("n2"), "Earth")
+            self.assertEqual(plotter.PRESET_COMPARE_STYLES["n2"]["color"], "green")
+            self.assertEqual(plotter.PRESET_COMPARE_STYLES["n2"]["marker"], "x")
+            earth_only = plotter.prepare_records(
+                [rec for rec in records if rec["atmos"] == "co2"],
+                attach_stubs=False,
+            )
+            self.assertIn("n2", {rec["atmos"] for rec in earth_only})
+            self.assertNotIn("venus_surface", {rec["atmos"] for rec in earth_only})
             self.assertEqual(
                 plotter.atmos_with_gpp(by_atmos),
                 ["n2", "co2", "evolved"],

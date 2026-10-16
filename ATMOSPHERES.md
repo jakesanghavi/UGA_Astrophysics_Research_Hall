@@ -177,10 +177,11 @@ It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
   Crashed / preset-only rows still show Δln P and Δln plant CO2; leftover
   is blank. `*` on the label.
 - `gpp_preset_knobs.png`: P, pCO2, air CO2, plant CO2, β, timestep P-factor,
-  modeltop, mmw. `plot_gpp_diagnostics.py` attaches `venus_surface` /
-  `mars_surface` stubs on the same (mass, M*, AU) grid when those mixes are
-  missing, so the 92 bar / 6.36 mbar knobs plot without launching a GCM
-  year. `--no-surface-stubs` turns that off.
+  modeltop, mmw. Earth (`n2`) is a green X. `plot_gpp_diagnostics.py`
+  attaches Earth plus `venus_surface` / `mars_surface` stubs on the same
+  (mass, M*, AU) grid when those mixes are missing, so 1 bar / 92 bar /
+  6.36 mbar knobs plot without launching a GCM year. `--no-surface-stubs`
+  skips the two surface-P stubs; Earth is still attached.
 
 `--preset-only` on `run_gpp_diagnostics.py` writes the same mix/column
 fields with no ExoPlaSim, then the PNGs. Default `--atmos` is still

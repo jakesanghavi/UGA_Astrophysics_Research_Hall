@@ -26,6 +26,7 @@ from atmos_presets import PRESETS
 from gpp_terms import (
     LIGHT_FACTORS,
     RATE_FIELDS,
+    SURFACE_STUB_ATMOS,
     WATER_BUDGET_TERMS,
     attach_surface_preset_records,
     attribution_vs_reference,
@@ -78,6 +79,16 @@ PRESET_KNOB_PANELS = [
     ("modeltop", "modeltop [mbar]", True),
     ("mmw", r"mmw [g mol$^{-1}$]", False),
 ]
+
+# Earth and the two surface-P presets: same marker family, Earth is green X.
+PRESET_COMPARE_STYLES = {
+    "n2": dict(color="green", marker="x", linestyle="none",
+               markersize=9, markeredgewidth=1.8, zorder=5),
+    "venus_surface": dict(color="crimson", marker="x", linestyle="none",
+                          markersize=9, markeredgewidth=1.8, zorder=4),
+    "mars_surface": dict(color="royalblue", marker="x", linestyle="none",
+                         markersize=9, markeredgewidth=1.8, zorder=4),
+}
 
 
 def load_bundle(path):
@@ -133,6 +144,12 @@ def atmos_order(by_atmos):
 
 def atmos_label(atmos):
     return PRESETS.get(atmos, {}).get("label", atmos)
+
+
+def knob_label(atmos):
+    if atmos == "n2":
+        return "Earth"
+    return atmos_label(atmos)
 
 
 def atmos_with_gpp(by_atmos):
@@ -504,7 +521,7 @@ def plot_water_attribution(records, reference, axis, outdir):
 
 
 def plot_preset_knobs(by_atmos, axis, outdir):
-    """Prescribed mix/column knobs, including crashed venus_surface / mars_surface."""
+    """Prescribed mix/column knobs vs Earth (green X) and surface-P presets."""
     atmos_names = atmos_order(by_atmos)
     if not atmos_names:
         return None
@@ -513,9 +530,10 @@ def plot_preset_knobs(by_atmos, axis, outdir):
     )
     axes = axes.ravel()
     colors = plt.rcParams["axes.prop_cycle"].by_key().get("color") or ["C0"]
-    any_crash = False
+    others = [name for name in atmos_names if name not in PRESET_COMPARE_STYLES]
+    compare = [name for name in ("n2", "venus_surface", "mars_surface") if name in by_atmos]
     for ax, (field, title, log_y) in zip(axes, PRESET_KNOB_PANELS):
-        for i, atmos in enumerate(atmos_names):
+        for i, atmos in enumerate(others):
             color = colors[i % len(colors)]
             live_x, live_y, crash_x, crash_y = xy_live_crash(
                 by_atmos[atmos], axis, field
@@ -524,19 +542,20 @@ def plot_preset_knobs(by_atmos, axis, outdir):
             if live_x.size:
                 ax.plot(live_x, live_y, marker="o", color=color, label=label)
             if crash_x.size:
-                any_crash = True
                 crash_label = None if live_x.size else label
                 ax.plot(
                     crash_x, crash_y, ls="none", marker="x", ms=8,
                     color=color, label=crash_label,
                 )
+        for atmos in compare:
+            xs, ys = xy(by_atmos[atmos], axis, field, include_crashed=True)
+            if not xs.size:
+                continue
+            ax.plot(xs, ys, label=knob_label(atmos), **PRESET_COMPARE_STYLES[atmos])
         ax.set_title(title)
         ax.set_xlabel(axis_label(axis))
         if log_y:
             ax.set_yscale("log")
-    if any_crash:
-        axes[0].plot([], [], ls="none", marker="x", color="0.3",
-                     label="crashed / preset-only")
     handles, labels = [], []
     for ax in axes:
         h, lab = ax.get_legend_handles_labels()
@@ -548,8 +567,9 @@ def plot_preset_knobs(by_atmos, axis, outdir):
         fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 6),
                    bbox_to_anchor=(0.5, 1.0), frameon=False)
     fig.suptitle(
-        "Prescribed GPP knobs (no GCM year required)\n"
-        "x = crashed or plot-time stub; 1-bar modeltop is Model default",
+        "Prescribed GPP knobs vs Earth\n"
+        "Earth = green X; Venus 92 bar / Mars 6.36 mbar = X; "
+        "1-bar modeltop is Model default",
         y=1.08,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.90])
@@ -641,8 +661,10 @@ def parse_args(argv=None):
 
 def prepare_records(records, attach_stubs=True):
     prepared = [backfill_preset_fields(dict(rec)) for rec in records]
+    # Always put Earth on the knobs comparison; surface-P stubs are optional.
+    prepared = attach_surface_preset_records(prepared, atmos=("n2",))
     if attach_stubs:
-        prepared = attach_surface_preset_records(prepared)
+        prepared = attach_surface_preset_records(prepared, atmos=SURFACE_STUB_ATMOS)
     return prepared
 
 
