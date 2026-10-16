@@ -178,5 +178,10 @@ reconstructed `GPP_light` from time-averaged factors will not match
   runnable, not calibrated.
 - Production `co2` / `mars` stay ~1 bar. Use `venus_surface` / `mars_surface`
   for 92 bar / 6.36 mbar.
+- Those surface-P runs pin `modeltop` to 5% of surface pressure (`vtype=4`),
+  the same ratio as ExoPlaSim's Earthlike 50 mbar / 1 bar. Leaving the default
+  ~50 mbar top puts it **below** a 6.36 mbar Mars surface and stretches 10
+  layers from 92 bar to 50 mbar. ~1 bar mixes are unchanged. Extreme columns
+  also use 8-byte precision and turn off pressure broadening.
 - PlaSim + SIMBA is not bit-reproducible run to run. Compare distributions,
   not exact GPP.

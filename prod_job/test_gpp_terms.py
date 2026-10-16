@@ -362,6 +362,32 @@ class TestRunConfigs(unittest.TestCase):
         self.assertFalse(cfgs[1]["ozone"])
 
 
+class TestColumnSetup(unittest.TestCase):
+    def test_one_bar_keeps_model_defaults(self):
+        self.assertEqual(ap.column_setup(1.0), {})
+        self.assertEqual(ap.column_setup(ap.total_pressure_bar(ap.VENUSLIKE_GASES)), {})
+        self.assertEqual(ap.model_precision(1.0), 4)
+
+    def test_mars_surface_top_below_surface(self):
+        p = ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"])
+        cfg = ap.column_setup(p)
+        self.assertLess(p * 1000.0, 50.0)
+        self.assertEqual(cfg["vtype"], 4)
+        self.assertLess(cfg["modeltop"], p * 1000.0)
+        self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=5)
+        self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(ap.model_precision(p), 8)
+
+    def test_venus_surface_top_scales_with_p(self):
+        p = ap.total_pressure_bar(ap.PRESETS["venus_surface"]["gases"])
+        cfg = ap.column_setup(p)
+        self.assertEqual(cfg["vtype"], 4)
+        self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=3)
+        self.assertGreater(cfg["modeltop"], 50.0)
+        self.assertFalse(cfg["pressurebroaden"])
+        self.assertEqual(ap.model_precision(p), 8)
+
+
 class TestDiagnosticCli(unittest.TestCase):
     def test_default_grid_is_tiny(self):
         args = runner.parse_args([])

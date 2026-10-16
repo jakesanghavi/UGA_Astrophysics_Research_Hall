@@ -178,6 +178,10 @@ CONFIGURE_OPTIONAL_KEYS = (
     "vegetation",
     "wetsoil",
     "ozone",
+    "modeltop",
+    "vtype",
+    "pressurebroaden",
+    "physicsfilter",
 )
 
 
@@ -253,6 +257,48 @@ def apply_atmos_preset(params, atmos_type, overrides=None):
 def total_pressure_bar(params):
     """Surface pressure [bar] as the sum of configured partial pressures."""
     return float(sum(float(params.get(k, 0.0) or 0.0) for k in GAS_KEYS))
+
+
+# exo.Earthlike pins the top at 50 mbar for a ~1000 mbar surface (5%).
+EARTH_SURFACE_MBAR = 1000.0
+EARTH_MODELTOP_MBAR = 50.0
+# Near 1 bar, leave Model defaults (vtype=0, no pinned top) so n2/co2/mars
+# 1-bar runs do not change. Far from 1 bar, pin a 5% top with vtype=4.
+COLUMN_NEAR_EARTH_BAR = (0.5, 2.0)
+
+
+def column_setup(p_surf_bar):
+    """Vertical grid for this surface pressure. Empty if ~1 bar.
+
+    PlaSim's default top is ~50 mbar. That is below a 6.36 mbar Mars surface
+    and a 10-layer stretch from 92 bar down to 50 mbar. For those columns,
+    pin modeltop to 5% of P (same ratio as Earthlike 50 mbar / 1 bar).
+    """
+    p_bar = float(p_surf_bar)
+    if p_bar <= 0.0:
+        raise ValueError("surface pressure must be positive")
+    lo, hi = COLUMN_NEAR_EARTH_BAR
+    if lo <= p_bar <= hi:
+        return {}
+    p_mbar = p_bar * 1000.0
+    modeltop = min(p_mbar * (EARTH_MODELTOP_MBAR / EARTH_SURFACE_MBAR), 0.5 * p_mbar)
+    extreme = p_bar < 0.05 or p_bar > 5.0
+    cfg = {
+        "vtype": 4,
+        "modeltop": modeltop,
+        "pressurebroaden": not extreme,
+    }
+    if extreme:
+        cfg["physicsfilter"] = "gp|exp|sp"
+    return cfg
+
+
+def model_precision(p_surf_bar, default=4):
+    """4-byte is the usual default; 8-byte for very thick/thin columns."""
+    p_bar = float(p_surf_bar)
+    if p_bar < 0.05 or p_bar > 5.0:
+        return max(8, int(default))
+    return int(default)
 
 
 def co2_ppmv_from_params(params):

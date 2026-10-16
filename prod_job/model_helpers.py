@@ -8,12 +8,15 @@ from atmos_presets import (
     GAS_KEYS,
     apply_atmos_preset,
     apply_physics_mode,
+    column_setup,
     co2_ppmv_from_params,
     default_ozone,
+    model_precision,
     resolve_atmos_type,
     resolve_physics_mode,
     sweep_json_name,
     thermo_from_params,
+    total_pressure_bar,
 )
 from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
 import sys
@@ -494,9 +497,16 @@ def calculate_veg(
         local_params['pH2'] = 0.75 * Gsi * F * retained_frac * (mass_ratio * mearth) ** 2 *  10 ** (-10) / (4 * pi * (r_new * rearth) ** 4)
 
     model_kwargs = apply_physics_mode(local_params, physics_mode)
+    p_surf = total_pressure_bar(local_params)
+    for key, value in column_setup(p_surf).items():
+        local_params.setdefault(key, value)
+    run_precision = model_precision(p_surf, default=PRECISION)
     thermo = thermo_from_params(local_params)
     print(
         f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
+        f"P={p_surf:.5g} bar modeltop={local_params.get('modeltop', 'default')} "
+        f"vtype={local_params.get('vtype', 'default')} "
+        f"precision={run_precision} "
         f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
         f"akap={thermo['akap']:.4f} (earth mode leaves akap=0.286; "
         f"other writes this akap; mars uses p_mars.f90)"
@@ -532,7 +542,7 @@ def calculate_veg(
             resolution=resolution,
             ncpus=NCPUS,
             layers=NLAYERS,
-            precision=PRECISION,
+            precision=run_precision,
             outputtype=OUTPUT_TYPE,
             mpi_opts=mpi_opts,
             mars=model_kwargs["mars"],

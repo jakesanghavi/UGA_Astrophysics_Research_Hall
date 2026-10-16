@@ -60,6 +60,9 @@ planet mass inside `calculate_veg`.
 
 `co2` and `mars` are ~1 bar mixes. Use `venus_surface` (92 bar) or
 `mars_surface` (6.36 mbar) only when you want those surface pressures.
+Those two pin `modeltop` to 5% of surface P so PlaSim's Earth ~50 mbar top
+is not used (that top is below a 6.36 mbar surface). First extreme-P run
+compiles an 8-byte binary.
 
 `physics_mode="mars"` is for actual Mars, not a Mars-composition planet at
 1 AU. For Venus- or Mars-like air around a Sun-like star use `other`.
