@@ -159,22 +159,26 @@ Earth / Venus-like / Mars-like at ~1 bar, masses 1 and 1.5 M⊕, 1 year:
 ```bash
 python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \
     --physics n2=earth,co2=other,mars=other --output gpp_diag.json
-python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
-python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots --only-bars
 ```
 
-`plot_gpp_diagnostics.py` also writes `gpp_rates_by_atmos.png` and
-`gpp_rate_regime_bars.png` (light, water, and min; crashed points omitted)
-and `gpp_water_dln_attribution.png` (`P` and plant CO2 vs leftover in
-`vegppw`). `gpp_preset_knobs.png` is P, plant CO2, β, and column knobs,
-including `venus_surface` / `mars_surface` even when the GCM crashed.
-The plotter attaches those two as preset-only stubs if they are missing
-from the JSON (`--no-surface-stubs` to skip).
+That writes `gpp_diag.json` and PNGs in `gpp_diag_plots/` (including
+`gpp_preset_knobs.png`). `--no-plot` skips the PNGs. To replot later:
+
+```bash
+python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
+```
+
+Rate charts (`gpp_rates_by_atmos.png`, `gpp_rate_regime_bars.png`) omit
+crashed points. `gpp_water_dln_attribution.png` and `gpp_preset_knobs.png`
+include `venus_surface` / `mars_surface` even without a GCM year (plotter
+attaches stubs; `--no-surface-stubs` to skip).
 
 ```bash
 python run_gpp_diagnostics.py --atmos venus_surface,mars_surface --masses 1 \
     --preset-only --output gpp_surface_knobs.json
 ```
+
+`--preset-only` also writes `gpp_surface_knobs_plots/gpp_preset_knobs.png`.
 
 Other useful flags: `--axis mass|au|mstar`, `--hz` (three HZ distances of
 `--mstar`), `--years`, `--force` (recompute even if the JSON already has the

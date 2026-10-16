@@ -576,6 +576,9 @@ class TestDiagnosticCli(unittest.TestCase):
                 self.assertIsNone(rec["gpp"])
                 self.assertIsNotNone(rec["p_total_bar"])
                 self.assertIsNotNone(rec["beta"])
+            knobs = os.path.join(tmp, "gpp_diag_plots", "gpp_preset_knobs.png")
+            self.assertTrue(os.path.isfile(knobs), knobs)
+            self.assertGreater(os.path.getsize(knobs), 1000)
 
     def test_physics_mapping_matches_demo(self):
         args = runner.parse_args([

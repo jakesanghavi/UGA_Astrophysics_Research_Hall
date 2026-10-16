@@ -159,8 +159,10 @@ Earth / Venus-like / Mars-like comparison (1-bar mixes, 1 year):
 ```
 python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \
     --physics n2=earth,co2=other,mars=other
-python plot_gpp_diagnostics.py
 ```
+
+JSON goes to `gpp_diag.json`; PNGs to `gpp_diag_plots/` (`--no-plot` skips
+PNGs). Replot with `python plot_gpp_diagnostics.py`.
 
 It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
 (`vegppw`), and GPP (`veggpp` = instantaneous min of the two). Plots:
@@ -181,7 +183,8 @@ It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
   year. `--no-surface-stubs` turns that off.
 
 `--preset-only` on `run_gpp_diagnostics.py` writes the same mix/column
-fields with no ExoPlaSim. Default `--atmos` is still `evolved,n2,co2`.
+fields with no ExoPlaSim, then the PNGs. Default `--atmos` is still
+`evolved,n2,co2`.
 
 β in that output is the **plant** (clamped) value. `co2_ppmv` is the air
 mixing ratio; `co2veg_ppmv` is what SIMBA used.

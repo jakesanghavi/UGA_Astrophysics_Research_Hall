@@ -236,7 +236,38 @@ def parse_args(argv=None):
         action="store_true",
         help="write mix/column knobs without launching ExoPlaSim (crashed stubs)",
     )
+    parser.add_argument(
+        "--plot-dir",
+        default=None,
+        help="PNG directory (default: <json stem>_plots, e.g. gpp_diag_plots)",
+    )
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="write JSON only; do not run plot_gpp_diagnostics.py",
+    )
     return parser.parse_args(argv)
+
+
+def plot_output_dir(json_path, plot_dir=None):
+    if plot_dir:
+        return plot_dir
+    stem, _ = os.path.splitext(os.path.abspath(json_path))
+    return stem + "_plots"
+
+
+def plot_bundle(args):
+    """Draw PNGs next to the JSON. JSON is the data; plots are a second step."""
+    if args.no_plot:
+        return
+    import plot_gpp_diagnostics as plotter
+
+    if not os.path.isfile(args.output):
+        print(f"skip plots: {args.output} not written")
+        return
+    outdir = plot_output_dir(args.output, args.plot_dir)
+    plotter.main(["--input", args.output, "--outdir", outdir])
+    print(f"Plots in {outdir}")
 
 
 def print_plan(tasks, args):
@@ -352,6 +383,7 @@ def write_preset_only(tasks, args):
         )
     save_bundle(args.output, args, records)
     print(f"Wrote {len(records)} preset-only record(s) to {args.output}")
+    plot_bundle(args)
 
 
 def main(argv=None):
@@ -364,6 +396,7 @@ def main(argv=None):
         write_preset_only(tasks, args)
         return 0
     run_tasks(tasks, args)
+    plot_bundle(args)
     return 0
 
 
