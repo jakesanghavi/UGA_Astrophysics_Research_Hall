@@ -11,6 +11,8 @@ from atmos_presets import (
     column_setup,
     co2_ppmv_from_params,
     default_ozone,
+    mass_file_token,
+    model_layers,
     model_precision,
     resolve_atmos_type,
     resolve_physics_mode,
@@ -105,31 +107,49 @@ def _plasim_dir():
 
 
 def ensure_simba_patch():
-    """Copy plasim_patches/simba.f90 into the ExoPlaSim src tree.
-
-    Returns True if PlaSim should be recompiled (source changed, or the last
-    compile was not from this patch).
-    """
+    """Copy plasim_patches/simba.f90 into the ExoPlaSim src tree; return its sha256."""
     if not os.path.isfile(_SIMBA_PATCH):
         raise FileNotFoundError("SIMBA patch missing: %s" % _SIMBA_PATCH)
     dest = os.path.join(_plasim_dir(), "src", "simba.f90")
-    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
     digest = _sha256_file(_SIMBA_PATCH)
-    dest_ok = os.path.isfile(dest) and _sha256_file(dest) == digest
-    if not dest_ok:
+    if not (os.path.isfile(dest) and _sha256_file(dest) == digest):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(_SIMBA_PATCH, dest)
-    stamped = False
-    if os.path.isfile(stamp):
-        with open(stamp) as handle:
-            stamped = handle.read().strip() == digest
-    return (not dest_ok) or (not stamped)
+    return digest
 
 
-def mark_simba_patch_compiled():
-    stamp = os.path.join(_plasim_dir(), ".simba_patch_sha")
-    with open(stamp, "w") as handle:
-        handle.write(_sha256_file(_SIMBA_PATCH) + "\n")
+# ExoPlaSim names binaries most_plasim_t<res>_l<layers>_p<ncpus>.x, ignoring
+# precision and mars=True, and reuses whatever binary has that name. Record
+# what each binary was built with so a precision/mars/SIMBA change rebuilds it.
+def _build_stamps_path():
+    return os.path.join(_plasim_dir(), ".build_stamps.json")
+
+
+def _read_build_stamps():
+    try:
+        with open(_build_stamps_path()) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def build_key(resolution, layers, ncpus):
+    return f"{resolution.lower()}_l{int(layers)}_p{int(ncpus)}"
+
+
+def build_signature(simba_sha, precision, mars):
+    return f"simba={simba_sha} precision={int(precision)} mars={bool(mars)}"
+
+
+def needs_recompile(key, signature):
+    return _read_build_stamps().get(key) != signature
+
+
+def mark_compiled(key, signature):
+    stamps = _read_build_stamps()
+    stamps[key] = signature
+    with open(_build_stamps_path(), "w") as handle:
+        json.dump(stamps, handle, indent=2)
 
 
 os.environ["GFORTRAN_ERROR_BACKTRACE"] = "1"
@@ -182,11 +202,16 @@ def planet_bulk(mass_ratio):
 
 
 def planet_timestep(gravity, attempt=0, p_surf_bar=1.0):
-    """PlaSim timestep [min], scaled with g and P, halved on each crash retry."""
+    """PlaSim timestep [min], scaled with g and P, halved on each crash retry.
+
+    The floor is MIN_TIMESTEP_MIN unless the pressure factor alone asks for
+    less (thick columns start at THICK_TIMESTEP_MIN).
+    """
     g_factor = min(1.0, gravity / G_EARTH)
     p_factor = timestep_pressure_factor(p_surf_bar)
     dt = BASE_TIMESTEP_MIN * g_factor * p_factor / (2 ** attempt)
-    return snap_timestep_min(dt, floor=MIN_TIMESTEP_MIN)
+    floor = min(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * p_factor)
+    return snap_timestep_min(dt, floor=floor)
 
 
 def planet_starlight(mstar, au):
@@ -514,15 +539,21 @@ def calculate_veg(
     p_surf = total_pressure_bar(local_params)
     p_h2o = float(local_params.get("pH2O", 0.0) or 0.0)
     for key, value in column_setup(p_surf, p_h2o_bar=p_h2o).items():
-        local_params.setdefault(key, value)
+        if key == "otherargs":
+            merged = dict(value)
+            merged.update(local_params.get("otherargs") or {})
+            local_params["otherargs"] = merged
+        else:
+            local_params.setdefault(key, value)
     run_precision = model_precision(p_surf, default=PRECISION)
+    run_layers = model_layers(p_surf, default=NLAYERS)
     thermo = thermo_from_params(local_params)
     print(
         f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
         f"P={p_surf:.5g} bar modeltop={local_params.get('modeltop', 'default')} "
         f"vtype={local_params.get('vtype', 'default')} "
         f"drycore={local_params.get('drycore', False)} "
-        f"precision={run_precision} "
+        f"precision={run_precision} layers={run_layers} "
         f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
         f"akap={thermo['akap']:.4f} (earth mode leaves akap=0.286; "
         f"other writes this akap; mars uses p_mars.f90)"
@@ -553,13 +584,17 @@ def calculate_veg(
         except:
             pass
 
-        need_recompile = ensure_simba_patch()
+        key = build_key(resolution, run_layers, NCPUS)
+        signature = build_signature(
+            ensure_simba_patch(), run_precision, model_kwargs["mars"]
+        )
+        need_recompile = needs_recompile(key, signature)
         planet = exo.Model(
             workdir=f"custom_earthlike_model{to_append}",
             modelname=f"custom_earthlike_model{to_append}",
             resolution=resolution,
             ncpus=NCPUS,
-            layers=NLAYERS,
+            layers=run_layers,
             precision=run_precision,
             outputtype=OUTPUT_TYPE,
             mpi_opts=mpi_opts,
@@ -572,7 +607,7 @@ def calculate_veg(
                 f"PlaSim build failed: {planet.executable} missing from {planet.workdir}"
             )
         if need_recompile:
-            mark_simba_patch_compiled()
+            mark_compiled(key, signature)
 
         planet.debug = True
         planet.verbose = True
@@ -729,10 +764,12 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         # previously crashed (vegetation stored as null).
         if existing is not None and existing[0] is not None:
             continue
-        # Unique workdir per task so concurrent runs never share a directory.
+        # Unique workdir per task (and per planet mass, since run_model.py runs
+        # mass_only masses concurrently) so runs never share a directory.
         safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
         res_tag = "" if resolution == "T21" else f"{resolution}_"
-        workdir_suffix = f"{res_tag}{atmos_type}_{physics_mode}_{safe}"
+        workdir_suffix = (f"{res_tag}{atmos_type}_{physics_mode}_"
+                          f"m{mass_file_token(mass_ratio)}_{safe}")
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:

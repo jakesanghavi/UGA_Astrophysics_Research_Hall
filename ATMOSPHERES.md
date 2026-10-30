@@ -204,11 +204,16 @@ reconstructed `GPP_light` from time-averaged factors will not match
   `mars_surface` pins `modeltop` to 5% of P (`vtype=4`) so the lid is above
   the 6.36 mbar surface. Earth orography stays: ExoPlaSim 3.4.2's
   `orography=` writes `OROSCALE` into `landmod_namelist`, which PlaSim does
-  not declare, so the run dies on startup. `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
-  (pseudolog) so the ~1 bar CO2 photosphere stays in the 10-layer domain; a
-  5% top would sit at 4.6 bar and cut that off. Dry mixes (`pH2O=0`) set
-  `drycore`. Extreme columns use 8-byte precision, turn off pressure
-  broadening, add `physicsfilter="gp|exp|sp"`, and start at a ~3–5 min
-  timestep instead of 45 min.
+  not declare, so the run dies on startup. `venus_surface` keeps the lid at
+  Earth's 50 mbar with `vtype=3` (pseudolog) so the ~1 bar CO2 photosphere
+  stays in the domain; a 5% top would sit at 4.6 bar and cut that off. Dry
+  mixes (`pH2O=0`) set `drycore`. Extreme columns use 8-byte precision, turn
+  off pressure broadening, and add `physicsfilter="gp|exp|sp"`.
+- Thick columns (> 10 bar) follow the LMD Venus GCM (Lebonnois et al. 2010,
+  2016): 20 layers instead of 10, a 1.5 min step, and a VIRA-like starting
+  profile (`TGR=735 K`, `ALR=7.8 K/km`, `DTROP=60 km`) instead of PlaSim's
+  288 K Earth profile. `ALR` only sets that reference profile. The LMD model
+  also makes CO2 heat capacity depend on temperature; PlaSim keeps a fixed
+  `akap`, which is not patched here. Thin columns start at 5 min.
 - PlaSim + SIMBA is not bit-reproducible run to run. Compare distributions,
   not exact GPP.

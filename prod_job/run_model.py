@@ -1,4 +1,5 @@
-from model_helpers import model_fun
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from model_helpers import model_fun, WORKERS
 from atmos_presets import resolve_run_configs, regime_file_tag
 from time import time, strftime, gmtime
 
@@ -57,29 +58,48 @@ def run_one_config(config):
           f"ATMOS_PARAMS={config['atmos_params']}  ozone={config['ozone']}  "
           f"run_mode={run_mode}  file_tag={file_tag}")
 
-    for m in MASS_RATIOS:
-        print(f"Starting model for mass ratio: {m}")
+    common = dict(
+        resolution="T21",
+        file_tag=file_tag,
+        atmos_type=atmos_type,
+        physics_mode=physics_mode,
+        atmos_params=config["atmos_params"],
+        configure_kwargs=config["extras"],
+    )
+    masses = list(MASS_RATIOS)
 
-        start_time = time()
+    # mass_only has one grid point per mass, so model_fun's own pool never
+    # gets more than one task. Run masses concurrently instead; the first one
+    # runs alone so the PlaSim binary compiles once before workers start.
+    if run_mode == "mass_only" and WORKERS > 1 and len(masses) > 1:
+        report_mass(*run_mass(masses[0], run_mode, common))
+        with ProcessPoolExecutor(max_workers=WORKERS) as pool:
+            futures = {pool.submit(run_mass, m, run_mode, common): m for m in masses[1:]}
+            for fut in as_completed(futures):
+                try:
+                    report_mass(*fut.result())
+                except Exception as e:
+                    print(f"Error! mass ratio {futures[fut]}: {e}")
+        return
 
-        common = dict(
-            resolution="T21",
-            file_tag=file_tag,
-            atmos_type=atmos_type,
-            physics_mode=physics_mode,
-            atmos_params=config["atmos_params"],
-            configure_kwargs=config["extras"],
-        )
-        if run_mode == "mass_only":
-            model_fun(m, points=[(REFERENCE_MSTAR, REFERENCE_AU)], **common)
-        else:
-            model_fun(m, **common)
+    for m in masses:
+        report_mass(*run_mass(m, run_mode, common))
 
-        end_time = time()
-        elapsed_seconds = end_time - start_time
-        formatted_time = strftime("%H:%M:%S", gmtime(elapsed_seconds))
-        print(f"Finished mass ratio {m}. Execution time: {formatted_time}")
-        print("-" * 30)
+
+def run_mass(m, run_mode, common):
+    print(f"Starting model for mass ratio: {m}")
+    start_time = time()
+    if run_mode == "mass_only":
+        model_fun(m, points=[(REFERENCE_MSTAR, REFERENCE_AU)], **common)
+    else:
+        model_fun(m, **common)
+    return m, time() - start_time
+
+
+def report_mass(m, elapsed_seconds):
+    formatted_time = strftime("%H:%M:%S", gmtime(elapsed_seconds))
+    print(f"Finished mass ratio {m}. Execution time: {formatted_time}")
+    print("-" * 30)
 
 
 def main():

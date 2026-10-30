@@ -35,7 +35,10 @@ runs `.cursor/install.sh`. That script:
 1. Installs the system toolchain required to compile ExoPlaSim's Fortran climate
    model: `gcc`, `g++`, `gfortran`, and OpenMPI.
 2. Creates a `.venv/` virtual environment and installs `requirements.txt`.
-3. Pre-compiles ExoPlaSim's `pyfft` postprocessor.
+3. Pre-compiles ExoPlaSim's `pyfft` postprocessor. Elsewhere, if
+   `import exoplasim.pyfft` fails, every run "crashes" in postprocessing;
+   build it with `python -c "import exoplasim; exoplasim.compile_pyfft()"`
+   (on macOS with `SDKROOT` set).
 
 Python dependencies live in the virtual environment. Always activate it first:
 
@@ -128,6 +131,9 @@ The pipeline is sped up in two functionally-equivalent ways:
   8-core M1). `WORKERS=1` restores fully sequential behavior. When `WORKERS > 1`,
   runs launch with `mpiexec --bind-to none` so concurrent `mpiexec` invocations
   don't pin to the same cores (otherwise parallel is *slower*, not faster).
+  `mass_only` has one grid point per mass, so `run_model.py` runs the masses
+  concurrently instead (first mass alone, so the binary compiles once).
+  Workdirs include the mass token so concurrent masses never share one.
 - Fewer subprocess/postprocess passes: all `N_YEARS` run in a single subprocess,
   and intermediate years skip pyburn postprocessing (only the final year, which
   is the only one inspected, is postprocessed).
@@ -153,9 +159,11 @@ points are skipped but `null` (crashed) points are re-attempted.
 
 As a more deterministic stability aid, `calculate_veg` also scales the model
 timestep down with surface gravity (`BASE_TIMESTEP_MIN * g/g_earth`) and with
-how far surface pressure is from 1 bar (identity between 0.5 and 2 bar; ~5 min
-at 92 bar, ~3 min at 6.36 mbar). Retries halve it again. The step is snapped
-to a 1440-minute-day divisor and floored at `MIN_TIMESTEP_MIN`. Low-g needs a
+how far surface pressure is from 1 bar (identity between 0.5 and 2 bar; 5 min
+at 6.36 mbar; 1.5 min above 10 bar). Retries halve it again. The step is
+snapped to the largest 1440-minute-day divisor within 10% above the target
+(so 1 M⊕, g = 9.62, keeps 45 min) and floored at `MIN_TIMESTEP_MIN` (3 min),
+or at the thick-column step if that is lower. Low-g needs a
 finer step because scale height and the surface-flux lowest-layer height both
 go as 1/g. Extreme P needs a finer step because PlaSim's 45 min default is
 tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
@@ -163,7 +171,8 @@ tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
 `venus_surface` / `mars_surface` also change the vertical grid: Mars lid at
 5% of P (the default 50 mbar lid is below a 6.36 mbar surface); Venus lid
 stays 50 mbar with `vtype=3` so the photosphere is still in the column.
-Dry mixes set `drycore`. Orography is not flattened: ExoPlaSim 3.4.2's
+Above 10 bar the column also gets 20 layers and a VIRA-like starting profile
+(`TGR`/`DTROP`/`ALR`), following the LMD Venus GCM. Dry mixes set `drycore`. Orography is not flattened: ExoPlaSim 3.4.2's
 `orography=` writes `OROSCALE` into a namelist PlaSim does not read, which
 crashes the run.
 

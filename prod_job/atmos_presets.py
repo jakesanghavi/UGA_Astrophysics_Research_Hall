@@ -271,8 +271,24 @@ COLUMN_NEAR_EARTH_BAR = (0.5, 2.0)
 # ExoPlaSim guidance: P < 0.1 bar or P > 10 bar often needs ~5 min steps.
 TIMESTEP_P_THIN_BAR = 0.1
 TIMESTEP_P_THICK_BAR = 10.0
-# Values that divide a 1440-minute day. 3 min is the pipeline floor.
-TIMESTEP_NICE_MIN = (45.0, 30.0, 15.0, 10.0, 5.0, 3.0)
+# Values that divide a 1440-minute day.
+TIMESTEP_NICE_MIN = (45.0, 30.0, 15.0, 10.0, 5.0, 3.0, 1.5)
+# Snap up to a nice value up to 10% above the target, so 1 M_earth
+# (g = 9.62 from the Noack radius) keeps 45 min instead of dropping to 30.
+TIMESTEP_SNAP_TOL = 1.1
+
+# Thick columns (> TIMESTEP_P_THICK_BAR) follow the LMD Venus GCM
+# (Lebonnois et al. 2010, 2016): finer vertical grid, ~1.5 min step, and a
+# VIRA-like start (735 K surface, ~7.8 K/km to ~265 K at 60 km) instead of
+# PlaSim's 288 K / 6.5 K/km / 12 km reference profile. ALR is only used for
+# that profile.
+THICK_COLUMN_LAYERS = 20
+THICK_TIMESTEP_MIN = 1.5
+THICK_INIT_PROFILE = {
+    "TGR@plasim_namelist": "735.0",
+    "DTROP@plasim_namelist": "60000.0",
+    "ALR@planet_namelist": "0.0078",
+}
 
 
 def column_setup(p_surf_bar, p_h2o_bar=None):
@@ -289,7 +305,8 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     photosphere (~1 bar) stays in the domain. A 5% top would sit at
     4.6 bar and cut that off. Use vtype=3 (pseudolog) so 10 layers can
     span 92 bar → 50 mbar without dumping all the resolution at the
-    ground. Dry mix → drycore.
+    ground. Dry mix → drycore. Above TIMESTEP_P_THICK_BAR, also start
+    from THICK_INIT_PROFILE (returned as `otherargs`).
     """
     p_bar = float(p_surf_bar)
     if p_bar <= 0.0:
@@ -315,14 +332,24 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
         cfg["physicsfilter"] = "gp|exp|sp"
     if p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
         cfg["drycore"] = True
+    if p_bar > TIMESTEP_P_THICK_BAR:
+        cfg["otherargs"] = dict(THICK_INIT_PROFILE)
     return cfg
+
+
+def model_layers(p_surf_bar, default=10):
+    """Vertical levels: THICK_COLUMN_LAYERS above TIMESTEP_P_THICK_BAR."""
+    if float(p_surf_bar) > TIMESTEP_P_THICK_BAR:
+        return max(THICK_COLUMN_LAYERS, int(default))
+    return int(default)
 
 
 def timestep_pressure_factor(p_surf_bar):
     """Scale Earth 45 min steps down away from ~1 bar.
 
-    Identity between 0.5 and 2 bar. At 6.36 mbar or 92 bar this is 5/45
-    (a 5 min first attempt before gravity and retries).
+    Identity between 0.5 and 2 bar. At 6.36 mbar this is 5/45 (a 5 min
+    first attempt before gravity and retries). Above TIMESTEP_P_THICK_BAR
+    it is THICK_TIMESTEP_MIN / 45.
     """
     p_bar = float(p_surf_bar)
     if p_bar <= 0.0:
@@ -330,15 +357,17 @@ def timestep_pressure_factor(p_surf_bar):
     lo, hi = COLUMN_NEAR_EARTH_BAR
     if lo <= p_bar <= hi:
         return 1.0
+    if p_bar > TIMESTEP_P_THICK_BAR:
+        return THICK_TIMESTEP_MIN / 45.0
     raw = min(1.0, p_bar / TIMESTEP_P_THIN_BAR, TIMESTEP_P_THICK_BAR / p_bar)
     if raw >= 1.0:
         return 1.0
     return max(5.0 / 45.0, raw)
 
 
-def snap_timestep_min(minutes, floor=3.0):
-    """Largest nice timestep that is still <= minutes and >= floor."""
-    target = max(float(floor), float(minutes))
+def snap_timestep_min(minutes, floor=3.0, tol=TIMESTEP_SNAP_TOL):
+    """Largest nice timestep that is <= minutes * tol and >= floor."""
+    target = max(float(floor), float(minutes) * float(tol))
     for dt in TIMESTEP_NICE_MIN:
         if dt <= target + 1e-12:
             return dt

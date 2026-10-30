@@ -150,7 +150,9 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(rec["vtype"], 3)
         self.assertAlmostEqual(rec["modeltop"], 50.0, places=5)
         self.assertTrue(rec["drycore"])
-        self.assertAlmostEqual(rec["timestep_p_factor"], 5.0 / 45.0, places=5)
+        self.assertAlmostEqual(
+            rec["timestep_p_factor"], ap.THICK_TIMESTEP_MIN / 45.0, places=5
+        )
 
     def test_venus_air_co2_clamped_in_summary(self):
         fields = self._toy_fields()
@@ -539,7 +541,17 @@ class TestColumnSetup(unittest.TestCase):
         self.assertFalse(cfg["pressurebroaden"])
         self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")
         self.assertEqual(ap.model_precision(p), 8)
-        self.assertAlmostEqual(ap.timestep_pressure_factor(p), 5.0 / 45.0, places=5)
+        self.assertAlmostEqual(
+            ap.timestep_pressure_factor(p), ap.THICK_TIMESTEP_MIN / 45.0, places=5
+        )
+        self.assertEqual(ap.model_layers(p), ap.THICK_COLUMN_LAYERS)
+        self.assertEqual(cfg["otherargs"], ap.THICK_INIT_PROFILE)
+
+    def test_thin_and_one_bar_keep_default_layers_and_start(self):
+        p_mars = ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"])
+        self.assertEqual(ap.model_layers(p_mars), 10)
+        self.assertEqual(ap.model_layers(1.0), 10)
+        self.assertNotIn("otherargs", ap.column_setup(p_mars, p_h2o_bar=0.0))
 
     def test_wet_thick_column_does_not_force_drycore(self):
         cfg = ap.column_setup(92.0, p_h2o_bar=0.01)
@@ -550,9 +562,52 @@ class TestColumnSetup(unittest.TestCase):
     def test_snap_timestep(self):
         self.assertEqual(ap.snap_timestep_min(45.0), 45.0)
         self.assertEqual(ap.snap_timestep_min(11.0), 10.0)
-        self.assertEqual(ap.snap_timestep_min(4.9), 3.0)
+        self.assertEqual(ap.snap_timestep_min(4.9), 5.0)
+        self.assertEqual(ap.snap_timestep_min(4.4), 3.0)
+        self.assertEqual(ap.snap_timestep_min(44.0), 45.0)
+        self.assertEqual(ap.snap_timestep_min(4.9, tol=1.0), 3.0)
         self.assertEqual(ap.snap_timestep_min(5.0), 5.0)
         self.assertEqual(ap.snap_timestep_min(2.0, floor=3.0), 3.0)
+        self.assertEqual(ap.snap_timestep_min(1.5, floor=1.5), 1.5)
+
+
+try:
+    import model_helpers as mh
+except Exception:  # exoplasim not installed
+    mh = None
+
+
+@unittest.skipIf(mh is None, "model_helpers needs exoplasim")
+class TestPlanetTimestepAndBuild(unittest.TestCase):
+    def test_earth_mass_keeps_45_min(self):
+        g = mh.planet_bulk(1.0)["gravity"]
+        self.assertLess(g, mh.G_EARTH)
+        self.assertEqual(mh.planet_timestep(g), 45.0)
+        self.assertEqual(mh.planet_timestep(g, p_surf_bar=ap.MARS_SURFACE_BAR), 5.0)
+
+    def test_venus_surface_starts_at_thick_step(self):
+        g = mh.planet_bulk(1.0)["gravity"]
+        self.assertEqual(
+            mh.planet_timestep(g, p_surf_bar=ap.VENUS_SURFACE_BAR),
+            ap.THICK_TIMESTEP_MIN,
+        )
+        low_g = mh.planet_bulk(0.1)["gravity"]
+        self.assertEqual(
+            mh.planet_timestep(low_g, attempt=2, p_surf_bar=ap.VENUS_SURFACE_BAR),
+            ap.THICK_TIMESTEP_MIN,
+        )
+
+    def test_low_g_one_bar_floor_unchanged(self):
+        low_g = mh.planet_bulk(0.1)["gravity"]
+        self.assertEqual(mh.planet_timestep(low_g, attempt=2), mh.MIN_TIMESTEP_MIN)
+
+    def test_build_signature_tracks_precision_and_mars(self):
+        key = mh.build_key("T21", 20, 4)
+        self.assertEqual(key, "t21_l20_p4")
+        base = mh.build_signature("abc", 4, False)
+        self.assertNotEqual(base, mh.build_signature("abc", 8, False))
+        self.assertNotEqual(base, mh.build_signature("abc", 4, True))
+        self.assertNotEqual(base, mh.build_signature("abd", 4, False))
 
 
 class TestDiagnosticCli(unittest.TestCase):

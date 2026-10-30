@@ -18,6 +18,18 @@ unset; without it the Homebrew `mpif90` link fails (`library 'System' not
 found`). A failed compile raises `PlaSim build failed` instead of recording
 the point as a `null` crash.
 
+ExoPlaSim's binary name ignores precision and `mars=True`.
+`model_helpers` records what each binary was built with in
+`exoplasim/plasim/.build_stamps.json` and recompiles when precision, the
+mars flag, or the SIMBA patch changes.
+
+The postprocessor needs the compiled `exoplasim.pyfft` module. If it is
+missing, every run fails after the model year finishes. Build it once:
+
+```bash
+SDKROOT=$(xcrun --show-sdk-path) python -c "import exoplasim; exoplasim.compile_pyfft()"
+```
+
 ## Local vs cluster
 
 Local / Cloud Agent VM:
@@ -39,6 +51,8 @@ export EXOPLASIM_WORKERS=$(( SLURM_NTASKS / EXOPLASIM_NCPUS ))
 
 Keep `WORKERS * NCPUS <=` cores. Local defaults in `model_helpers.py` are
 `NCPUS=4`, `WORKERS=2`. Sequential: `export EXOPLASIM_WORKERS=1`.
+`mass_only` sweeps run up to `WORKERS` masses at once; `normal` sweeps run
+masses in order and parallelize the stars and HZ distances within each mass.
 
 ## Switches in `run_model.py`
 
@@ -62,13 +76,14 @@ Per-config optional keys: `physics_mode`, `atmos_params`, `ozone`, `run_mode`,
 
 Gravity, radius, timestep, and (for `evolved`) leftover H/He still follow
 planet mass inside `calculate_veg`. Timestep also shrinks when surface P is
-far from 1 bar (about 5 min at 92 bar, 3 min at 6.36 mbar, then halved on
-crash retries).
+far from 1 bar (1.5 min above 10 bar, 5 min at 6.36 mbar, then halved on
+crash retries down to the floor).
 
 `co2` and `mars` are ~1 bar mixes. Use `venus_surface` (92 bar) or
 `mars_surface` (6.36 mbar) only when you want those surface pressures.
 `mars_surface` pins the lid to 5% of P; `venus_surface` keeps Earth's 50 mbar
-lid with log-ish layers so the photosphere stays in the domain. Dry mixes
+lid with log-ish layers so the photosphere stays in the domain, and gets 20
+layers and a VIRA-like starting temperature profile. Dry mixes
 turn off evaporation (`drycore`). First extreme-P run compiles an 8-byte
 binary. Delete the old `*_crashed/` workdirs (or just rerun — the driver
 already removes them per attempt). JSON `null` points are retried.
