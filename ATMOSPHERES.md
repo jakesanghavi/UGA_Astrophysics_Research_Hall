@@ -215,5 +215,12 @@ reconstructed `GPP_light` from time-averaged factors will not match
   288 K Earth profile. `ALR` only sets that reference profile. The LMD model
   also makes CO2 heat capacity depend on temperature; PlaSim keeps a fixed
   `akap`, which is not patched here. Thin columns start at 5 min.
+- Thick columns also set `DZTOP=2` m (top soil layer, default 0.2 m).
+  PlaSim steps land surface temperature explicitly in the atmospheric heat
+  flux; at 92 bar the sensible heat flux reached ~1.8 MW/m2 against a 0.2 m
+  layer, overshot the air temperature, oscillated to negative kelvin, and
+  crashed in `mkstress` (`fluxmod.f90`) after ~2,800 steps. With 2 m the run
+  is stable. The ground and ocean still start at Earth temperatures, so the
+  column needs years to adjust.
 - PlaSim + SIMBA is not bit-reproducible run to run. Compare distributions,
   not exact GPP.

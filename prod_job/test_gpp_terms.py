@@ -545,7 +545,8 @@ class TestColumnSetup(unittest.TestCase):
             ap.timestep_pressure_factor(p), ap.THICK_TIMESTEP_MIN / 45.0, places=5
         )
         self.assertEqual(ap.model_layers(p), ap.THICK_COLUMN_LAYERS)
-        self.assertEqual(cfg["otherargs"], ap.THICK_INIT_PROFILE)
+        self.assertEqual(cfg["otherargs"], ap.THICK_COLUMN_NAMELIST)
+        self.assertEqual(cfg["otherargs"]["DZTOP@landmod_namelist"], "2.0")
 
     def test_thin_and_one_bar_keep_default_layers_and_start(self):
         p_mars = ap.total_pressure_bar(ap.PRESETS["mars_surface"]["gases"])

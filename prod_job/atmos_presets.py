@@ -282,12 +282,19 @@ TIMESTEP_SNAP_TOL = 1.1
 # VIRA-like start (735 K surface, ~7.8 K/km to ~265 K at 60 km) instead of
 # PlaSim's 288 K / 6.5 K/km / 12 km reference profile. ALR is only used for
 # that profile.
+# DZTOP: PlaSim steps land surface temperature explicitly in the atmospheric
+# heat flux. At 92 bar the air is ~55x denser than Earth's, and against the
+# default 0.2 m top soil layer one step of sensible heat (up to ~1.8 MW/m2)
+# overshoots the air temperature, then oscillates to negative kelvin and
+# crashes in mkstress after ~3 days. A 2 m layer keeps the step stable; a
+# thick CO2 atmosphere has almost no diurnal surface cycle anyway.
 THICK_COLUMN_LAYERS = 20
 THICK_TIMESTEP_MIN = 1.5
-THICK_INIT_PROFILE = {
+THICK_COLUMN_NAMELIST = {
     "TGR@plasim_namelist": "735.0",
     "DTROP@plasim_namelist": "60000.0",
     "ALR@planet_namelist": "0.0078",
+    "DZTOP@landmod_namelist": "2.0",
 }
 
 
@@ -306,7 +313,7 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     4.6 bar and cut that off. Use vtype=3 (pseudolog) so 10 layers can
     span 92 bar → 50 mbar without dumping all the resolution at the
     ground. Dry mix → drycore. Above TIMESTEP_P_THICK_BAR, also start
-    from THICK_INIT_PROFILE (returned as `otherargs`).
+    from THICK_COLUMN_NAMELIST (returned as `otherargs`).
     """
     p_bar = float(p_surf_bar)
     if p_bar <= 0.0:
@@ -333,7 +340,7 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     if p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
         cfg["drycore"] = True
     if p_bar > TIMESTEP_P_THICK_BAR:
-        cfg["otherargs"] = dict(THICK_INIT_PROFILE)
+        cfg["otherargs"] = dict(THICK_COLUMN_NAMELIST)
     return cfg
 
 

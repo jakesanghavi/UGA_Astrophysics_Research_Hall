@@ -172,7 +172,9 @@ tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
 5% of P (the default 50 mbar lid is below a 6.36 mbar surface); Venus lid
 stays 50 mbar with `vtype=3` so the photosphere is still in the column.
 Above 10 bar the column also gets 20 layers and a VIRA-like starting profile
-(`TGR`/`DTROP`/`ALR`), following the LMD Venus GCM. Dry mixes set `drycore`. Orography is not flattened: ExoPlaSim 3.4.2's
+(`TGR`/`DTROP`/`ALR`), following the LMD Venus GCM, and a 2 m top soil layer
+(`DZTOP`). Without `DZTOP` the explicit land surface temperature step
+overshoots under the dense air and `venus_surface` crashes after ~3 days. Dry mixes set `drycore`. Orography is not flattened: ExoPlaSim 3.4.2's
 `orography=` writes `OROSCALE` into a namelist PlaSim does not read, which
 crashes the run.
 

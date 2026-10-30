@@ -83,7 +83,8 @@ crash retries down to the floor).
 `mars_surface` (6.36 mbar) only when you want those surface pressures.
 `mars_surface` pins the lid to 5% of P; `venus_surface` keeps Earth's 50 mbar
 lid with log-ish layers so the photosphere stays in the domain, and gets 20
-layers and a VIRA-like starting temperature profile. Dry mixes
+layers, a VIRA-like starting temperature profile, and a 2 m top soil layer
+(`DZTOP`, needed for stability). Dry mixes
 turn off evaporation (`drycore`). First extreme-P run compiles an 8-byte
 binary. Delete the old `*_crashed/` workdirs (or just rerun — the driver
 already removes them per attempt). JSON `null` points are retried.
