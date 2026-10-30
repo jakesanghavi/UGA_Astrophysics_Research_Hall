@@ -8,7 +8,7 @@ from time import time, strftime, gmtime
 # "mass_only" : vary planet mass only; every planet is placed at 1 AU around a
 #               1 solar-mass star. Output files get a "_massonly_<atmos>" tag.
 # Per-config override: {"atmos_type": "n2", "run_mode": "mass_only"}
-RUN_MODE = "normal"
+RUN_MODE = "mass_only"
 
 # Sequence of atmosphere sweeps. Each entry is an atmos name or a dict:
 #   atmos_type (required)
