@@ -13,6 +13,11 @@ cd prod_job
 On Sapelo2 the batch script uses `~/env/exoplasim_16cpu` instead. First PlaSim
 compile for a given resolution/CPU count is slow; later runs reuse the binary.
 
+On macOS, `model_helpers` sets `SDKROOT` from `xcrun --show-sdk-path` if it is
+unset; without it the Homebrew `mpif90` link fails (`library 'System' not
+found`). A failed compile raises `PlaSim build failed` instead of recording
+the point as a `null` crash.
+
 ## Local vs cluster
 
 Local / Cloud Agent VM:

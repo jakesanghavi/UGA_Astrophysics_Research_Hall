@@ -36,8 +36,7 @@ SURFACE_STUB_ATMOS = ("venus_surface", "mars_surface")
 # Earth (n2) plus the two surface-P extremes, for the knobs comparison.
 COMPARISON_PRESET_ATMOS = ("n2",) + SURFACE_STUB_ATMOS
 COLUMN_RECORD_KEYS = (
-    "modeltop", "vtype", "drycore", "orography",
-    "pressurebroaden", "physicsfilter",
+    "modeltop", "vtype", "drycore", "pressurebroaden", "physicsfilter",
 )
 
 # SIMBA / landmod constants (mks). Keep in sync with plasim_patches/simba.f90.
@@ -381,7 +380,6 @@ def base_record(
         "modeltop": None,
         "vtype": None,
         "drycore": None,
-        "orography": None,
         "pressurebroaden": None,
         "physicsfilter": None,
         "timestep_p_factor": None,

@@ -261,7 +261,6 @@ class TestAttribution(unittest.TestCase):
         self.assertLess(budget["dln"]["p_total_bar"], 0.0)
         self.assertEqual(budget["dominant_water_term"], "p_total_bar")
         self.assertEqual(ms["vtype"], 4)
-        self.assertEqual(ms["orography"], 0.0)
 
     def test_attach_surface_stubs_on_existing_grid(self):
         live = gt.base_record(
@@ -301,7 +300,7 @@ class TestAttribution(unittest.TestCase):
         self.assertIsNone(rec["p_total_bar"])
         filled = gt.backfill_preset_fields(rec)
         self.assertAlmostEqual(filled["p_total_bar"], ap.MARS_SURFACE_BAR, places=6)
-        self.assertEqual(filled["orography"], 0.0)
+        self.assertAlmostEqual(filled["modeltop"], ap.MARS_SURFACE_BAR * 1000.0 * 0.05, places=5)
 
 
 class TestPresets(unittest.TestCase):
@@ -477,10 +476,10 @@ class TestRunConfigs(unittest.TestCase):
     def test_column_overrides_pass_through(self):
         cfg = ap.resolve_run_config({
             "atmos_type": "mars_surface",
-            "orography": 0.5,
+            "vtype": 0,
             "drycore": False,
         })
-        self.assertEqual(cfg["extras"]["orography"], 0.5)
+        self.assertEqual(cfg["extras"]["vtype"], 0)
         self.assertFalse(cfg["extras"]["drycore"])
 
     def test_run_model_default_is_surface_sequence(self):
@@ -522,7 +521,7 @@ class TestColumnSetup(unittest.TestCase):
         self.assertEqual(cfg["vtype"], 4)
         self.assertLess(cfg["modeltop"], p * 1000.0)
         self.assertAlmostEqual(cfg["modeltop"], p * 1000.0 * 0.05, places=5)
-        self.assertEqual(cfg["orography"], 0.0)
+        self.assertNotIn("orography", cfg)
         self.assertTrue(cfg["drycore"])
         self.assertFalse(cfg["pressurebroaden"])
         self.assertEqual(cfg["physicsfilter"], "gp|exp|sp")

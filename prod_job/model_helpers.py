@@ -137,6 +137,16 @@ os.environ["GFORTRAN_UNBUFFERED_ALL"] = "1"
 os.environ["FORTRAN_STDOUT_UNIT"] = "6"
 os.environ["PYTHONFAULTHANDLER"] = "1"
 
+# Homebrew gfortran/mpif90 cannot find libSystem on macOS unless SDKROOT is set
+# ("ld: library 'System' not found"), and ExoPlaSim ignores the failed compile.
+if sys.platform == "darwin" and "SDKROOT" not in os.environ:
+    try:
+        os.environ["SDKROOT"] = subprocess.run(
+            ["xcrun", "--show-sdk-path"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
 def get_lxuv0_from_bolometric(L_bol_present):
     L_bol_watts = L_bol_present
 
@@ -511,7 +521,6 @@ def calculate_veg(
         f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
         f"P={p_surf:.5g} bar modeltop={local_params.get('modeltop', 'default')} "
         f"vtype={local_params.get('vtype', 'default')} "
-        f"orography={local_params.get('orography', 'default')} "
         f"drycore={local_params.get('drycore', False)} "
         f"precision={run_precision} "
         f"mmw={thermo['mmw']:.4f} g/mol gascon={thermo['gascon']:.3f} "
@@ -557,6 +566,11 @@ def calculate_veg(
             mars=model_kwargs["mars"],
             recompile=need_recompile,
         )
+        # exo.Model does not check the compile; a failed build leaves no binary.
+        if not os.path.isfile(os.path.join(planet.workdir, planet.executable)):
+            raise RuntimeError(
+                f"PlaSim build failed: {planet.executable} missing from {planet.workdir}"
+            )
         if need_recompile:
             mark_simba_patch_compiled()
 

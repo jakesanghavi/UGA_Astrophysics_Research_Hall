@@ -202,8 +202,9 @@ reconstructed `GPP_light` from time-averaged factors will not match
   for 92 bar / 6.36 mbar.
 - Surface-P columns get extra configure knobs; ~1 bar mixes are unchanged.
   `mars_surface` pins `modeltop` to 5% of P (`vtype=4`) so the lid is above
-  the 6.36 mbar surface, and sets `orography=0` (Earth mountains vs a thin
-  column). `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
+  the 6.36 mbar surface. Earth orography stays: ExoPlaSim 3.4.2's
+  `orography=` writes `OROSCALE` into `landmod_namelist`, which PlaSim does
+  not declare, so the run dies on startup. `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
   (pseudolog) so the ~1 bar CO2 photosphere stays in the 10-layer domain; a
   5% top would sit at 4.6 bar and cut that off. Dry mixes (`pH2O=0`) set
   `drycore`. Extreme columns use 8-byte precision, turn off pressure
