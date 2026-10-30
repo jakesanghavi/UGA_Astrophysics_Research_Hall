@@ -163,7 +163,9 @@ tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
 `venus_surface` / `mars_surface` also change the vertical grid: Mars lid at
 5% of P (the default 50 mbar lid is below a 6.36 mbar surface); Venus lid
 stays 50 mbar with `vtype=3` so the photosphere is still in the column.
-Thin columns flatten orography. Dry mixes set `drycore`.
+Dry mixes set `drycore`. Orography is not flattened: ExoPlaSim 3.4.2's
+`orography=` writes `OROSCALE` into a namelist PlaSim does not read, which
+crashes the run.
 
 ## Cursor Cloud specific instructions
 

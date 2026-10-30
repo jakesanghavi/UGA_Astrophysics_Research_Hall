@@ -159,11 +159,33 @@ Earth / Venus-like / Mars-like comparison (1-bar mixes, 1 year):
 ```
 python run_gpp_diagnostics.py --atmos n2,co2,mars --masses 1,1.5 --years 1 \
     --physics n2=earth,co2=other,mars=other
-python plot_gpp_diagnostics.py
 ```
 
-It records land-mean β, f(T), fPAR, SW↓, GPP_light, GPP_water, and `Δln` of
-those vs an Earth-like reference.
+JSON goes to `gpp_diag.json`; PNGs to `gpp_diag_plots/` (`--no-plot` skips
+PNGs). Replot with `python plot_gpp_diagnostics.py`.
+
+It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
+(`vegppw`), and GPP (`veggpp` = instantaneous min of the two). Plots:
+
+- existing light-factor panels (live GPP only)
+- `gpp_rates_by_atmos.png` / `gpp_rate_regime_bars.png`: light, water, and
+  min on the same axes per mix (crashed points omitted)
+- `gpp_dln_attribution.png`: Δln of the light factors vs an n2 reference
+- `gpp_water_dln_attribution.png`: Δln(`vegppw`) split into prescribed `P`
+  and plant CO2 plus a climate leftover (ET / VPD / cover / averaging).
+  That leftover is not a reconstruction of PlaSim eq. 6.11 from time means.
+  Crashed / preset-only rows still show Δln P and Δln plant CO2; leftover
+  is blank. `*` on the label.
+- `gpp_preset_knobs.png`: P, pCO2, air CO2, plant CO2, β, timestep P-factor,
+  modeltop, mmw. Earth (`n2`) is a green X. `plot_gpp_diagnostics.py`
+  attaches Earth plus `venus_surface` / `mars_surface` stubs on the same
+  (mass, M*, AU) grid when those mixes are missing, so 1 bar / 92 bar /
+  6.36 mbar knobs plot without launching a GCM year. `--no-surface-stubs`
+  skips the two surface-P stubs; Earth is still attached.
+
+`--preset-only` on `run_gpp_diagnostics.py` writes the same mix/column
+fields with no ExoPlaSim, then the PNGs. Default `--atmos` is still
+`evolved,n2,co2`.
 
 β in that output is the **plant** (clamped) value. `co2_ppmv` is the air
 mixing ratio; `co2veg_ppmv` is what SIMBA used.
@@ -180,8 +202,9 @@ reconstructed `GPP_light` from time-averaged factors will not match
   for 92 bar / 6.36 mbar.
 - Surface-P columns get extra configure knobs; ~1 bar mixes are unchanged.
   `mars_surface` pins `modeltop` to 5% of P (`vtype=4`) so the lid is above
-  the 6.36 mbar surface, and sets `orography=0` (Earth mountains vs a thin
-  column). `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
+  the 6.36 mbar surface. Earth orography stays: ExoPlaSim 3.4.2's
+  `orography=` writes `OROSCALE` into `landmod_namelist`, which PlaSim does
+  not declare, so the run dies on startup. `venus_surface` keeps the lid at Earth's 50 mbar with `vtype=3`
   (pseudolog) so the ~1 bar CO2 photosphere stays in the 10-layer domain; a
   5% top would sit at 4.6 bar and cut that off. Dry mixes (`pH2O=0`) set
   `drycore`. Extreme columns use 8-byte precision, turn off pressure

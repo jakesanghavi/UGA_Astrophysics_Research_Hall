@@ -166,6 +166,8 @@ def resolve_physics_mode(physics_mode):
 EARTHLIKE_ATMOS = ("n2", "evolved")
 
 # Extra ExoPlaSim configure() keys a RUN_CONFIGS entry may set.
+# Not orography: ExoPlaSim 3.4.2 writes OROSCALE into landmod_namelist, which
+# PlaSim does not declare, so the run dies reading the namelist.
 CONFIGURE_OPTIONAL_KEYS = (
     "rotationperiod",
     "synchronous",
@@ -178,7 +180,6 @@ CONFIGURE_OPTIONAL_KEYS = (
     "vegetation",
     "wetsoil",
     "drycore",
-    "orography",
     "ozone",
     "modeltop",
     "vtype",
@@ -280,9 +281,9 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     Empty if ~1 bar, so n2/co2/mars 1-bar runs keep Model defaults.
 
     Thin (Mars 6.36 mbar): PlaSim's usual ~50 mbar top is *below* the
-    surface. Pin the top to 5% of P (vtype=4), flatten Earth orography
-    (mountains can exceed a thin column), and turn off evaporation if
-    the mix has no water.
+    surface. Pin the top to 5% of P (vtype=4) and turn off evaporation
+    if the mix has no water. Earth orography stays (see
+    CONFIGURE_OPTIONAL_KEYS for why it cannot be flattened).
 
     Thick (Venus 92 bar): keep the lid near Earth's 50 mbar so the CO2
     photosphere (~1 bar) stays in the domain. A 5% top would sit at
@@ -310,8 +311,6 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
         "modeltop": modeltop,
         "pressurebroaden": not extreme,
     }
-    if thin:
-        cfg["orography"] = 0.0
     if extreme:
         cfg["physicsfilter"] = "gp|exp|sp"
     if p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
