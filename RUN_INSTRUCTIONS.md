@@ -105,6 +105,7 @@ smoke test.
 
 Every `run_model.py` invocation first writes `earth_reference.json`: 1 M⊕ at
 1 AU around 1 M⊙ with `n2` + earth physics, regardless of the sweep's mix.
+It runs in `custom_earthlike_modelref_n2_earth_m10_1p0_1p0`.
 
 ## Typical specs
 
@@ -166,29 +167,46 @@ T21 has no resolution suffix; T42 is `_T42` before `.json`.
 
 Non-default `pressure_scaling` / `co2_scaling` append `_pfix|_pmass` and
 `_co2mix|_co2pp|_co2area`; `plot_veg_by_params.py` plots each scenario
-separately (`gpp_massonly_n2_earth_pmass_co2pp.png`).
+separately (`gpp_massonly_n2_earth_pmass_co2pp_perarea.png`).
 
 Examples: `16cpus_test_10_normal_n2.json`, `16cpus_test_10_massonly_n2.json`,
 `16cpus_test_01_massonly_n2_pmass_co2pp.json`,
 `16cpus_test_15_massonly_co2_other.json`. Older `_massonly2` / `_massonly`
 files are still read as `n2` + earth.
 
-Existing successful points are skipped. JSON `null` vegetation means a crash;
-those points are retried. `0.0` is a real zero-vegetation result.
+Each entry is `[avg, tot, startemp, flux, area_avg, planet_total]` (see
+`AGENTS.md`). Existing successful points are skipped. JSON `null` vegetation
+means a crash; those points are retried. `0.0` is a real zero-vegetation
+result.
 
 ## Plotting a production sweep
 
 `plot_veg_by_params.py` discovers every `16cpus_test_*.json` in `--dir`
 (default: cwd), groups by (mode, atmos, physics, resolution), and writes
-`gpp_<mode>_<atmos>_<physics>[_<res>][_scale].png`. Baseline is
-`earth_reference.json`. Masses, M*, and AU come from the files.
+`gpp_<mode>_<atmos>_<physics>[_<scenario>][_<res>][_scale]_<metric>.png`.
+Masses, M*, and AU come from the files.
+
+| `--metric` | Suffix | Plotted |
+|---|---|---|
+| `per_area` (default) | `_perarea` | GPP per m² of land, cos(latitude)-weighted |
+| `planet_total` (default) | `_total` | `per_area` × the planet's land area |
+| `cells` | none | unweighted sum over land cells (ignores planet size) |
+
+Baseline is `earth_reference.json`. If it has no value for the metric
+(written before the area metrics), the fixed-pressure 1 M⊕ sweep point is
+used and the script says so.
 
 ```bash
 python plot_veg_by_params.py
 python plot_veg_by_params.py --list
 python plot_veg_by_params.py --atmos n2 --mode mass_only
+python plot_veg_by_params.py --metric cells
 python plot_veg_by_params.py --atmos co2 --physics other --mode normal
 ```
+
+JSON from before the area metrics: run `python backfill_area_gpp.py` (add
+`--dry-run` to preview) while the `custom_earthlike_model*` workdirs are still
+on disk.
 
 ## GPP diagnostic (not the production sweep)
 

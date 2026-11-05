@@ -50,7 +50,8 @@ def run_earth_reference():
               atmos_type="n2",
               physics_mode="earth",
               configure_kwargs={"ozone": True, "rotationperiod": 1.0,
-                                "synchronous": False})
+                                "synchronous": False},
+              workdir_tag="ref_")
 
 
 def run_one_config(config):

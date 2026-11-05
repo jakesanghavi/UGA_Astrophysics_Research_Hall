@@ -833,6 +833,103 @@ class TestPlotter(unittest.TestCase):
                 self.assertGreater(os.path.getsize(path), 1000)
 
 
+class TestLandGppSummary(unittest.TestCase):
+    lat = np.array([60.0, 0.0, -60.0])
+
+    def test_uniform_field(self):
+        gpp = np.full((3, 4), 2e-9)
+        lsm = np.zeros((3, 4))
+        lsm[:, :2] = 1.0
+        avg, tot, area, total = gt.land_gpp_summary(gpp, lsm, self.lat, 1.0)
+        self.assertAlmostEqual(avg, 2e-9)
+        self.assertAlmostEqual(tot, 6 * 2e-9)
+        self.assertAlmostEqual(area, 2e-9)
+        land_m2 = 0.5 * 4 * math.pi * gt.EARTH_RADIUS_M ** 2
+        self.assertAlmostEqual(total, 2e-9 * land_m2 * gt.SECONDS_PER_YEAR / 1e12)
+
+    def test_cos_latitude_weighting(self):
+        gpp = np.array([[1.0], [0.0], [1.0]])
+        lsm = np.ones((3, 1))
+        avg, _tot, area, _total = gt.land_gpp_summary(gpp, lsm, self.lat, 1.0)
+        self.assertAlmostEqual(avg, 2 / 3)
+        self.assertAlmostEqual(area, 0.5)   # cos 60 = 0.5 per polar row, 1 at equator
+
+    def test_total_scales_with_radius_squared_and_time_axis(self):
+        gpp = np.ones((12, 3, 2))
+        lsm = np.ones((12, 3, 2))
+        small = gt.land_gpp_summary(gpp, lsm, self.lat, 0.5)
+        big = gt.land_gpp_summary(gpp, lsm, self.lat, 1.0)
+        self.assertAlmostEqual(small[2], big[2])
+        self.assertAlmostEqual(big[3] / small[3], 4.0)
+
+    def test_metric_indices_match_entry_layout(self):
+        entry = ["avg", "tot", "startemp", "flux", "area", "total"]
+        self.assertEqual([entry[i] for i in gt.GPP_METRIC_INDEX.values()],
+                         ["tot", "area", "total"])
+
+
+class TestWorkdirNames(unittest.TestCase):
+    def test_matches_sweep_folder_names(self):
+        self.assertEqual(
+            ap.grid_workdir_suffix(0.25, "1.0", "1.0", "n2", "earth"),
+            "n2_earth_m025_1p0_1p0",
+        )
+        self.assertEqual(
+            ap.grid_workdir_suffix(2, "1.0", "1.0", "n2", "earth",
+                                   pressure_scaling="mass", co2_scaling="partial_pressure"),
+            "n2_earth_pmass_co2pp_m2_1p0_1p0",
+        )
+        self.assertEqual(
+            ap.grid_workdir_suffix(1.0, 1.0, 1.0, "n2", "earth", tag="ref_"),
+            "ref_n2_earth_m10_1p0_1p0",
+        )
+
+    def test_parsed_mass_token_rebuilds_folder(self):
+        name = ap.sweep_json_name(2, run_mode="mass_only", atmos_type="n2",
+                                  physics_mode="earth")
+        parsed = ap.parse_sweep_json_name(name)
+        self.assertEqual(parsed["mass"], 2.0)
+        self.assertEqual(parsed["mass_token"], "2")
+        self.assertIn("_m2_", ap.grid_workdir_suffix(
+            parsed["mass_token"], "1.0", "1.0", "n2", "earth"))
+
+
+@unittest.skipIf(mh is None, "model_helpers needs exoplasim")
+class TestBackfill(unittest.TestCase):
+    def _netcdf(self, path, value):
+        import netCDF4
+        with netCDF4.Dataset(path, "w") as data:
+            data.createDimension("time", 2)
+            data.createDimension("lat", 3)
+            data.createDimension("lon", 2)
+            data.createVariable("lat", "f8", ("lat",))[:] = [60.0, 0.0, -60.0]
+            data.createVariable("veggpp", "f8", ("time", "lat", "lon"))[:] = value
+            data.createVariable("lsm", "f8", ("time", "lat", "lon"))[:] = 1.0
+
+    def test_appends_area_metrics_and_skips_other_runs(self):
+        import backfill_area_gpp as backfill
+        with tempfile.TemporaryDirectory() as tmp:
+            good, stale = os.path.join(tmp, "good"), os.path.join(tmp, "stale")
+            os.makedirs(good)
+            os.makedirs(stale)
+            self._netcdf(os.path.join(good, "MOST.00002.nc"), 2e-9)
+            self._netcdf(os.path.join(stale, "MOST.00002.nc"), 3e-9)
+            path = os.path.join(tmp, "sweep.json")
+            payload = {"1.0": {"1.0": [2e-9, 12e-9, 5697.0, 1270.0],
+                               "2.0": [2e-9, 12e-9, 5697.0, 1270.0]}}
+            with open(path, "w") as handle:
+                json.dump(payload, handle)
+            updated, skipped = backfill.backfill_file(
+                path, lambda ms, au: good if au == "1.0" else stale, 1.0)
+            self.assertEqual(len(updated), 1)
+            self.assertEqual(len(skipped), 1)
+            with open(path) as handle:
+                result = json.load(handle)
+            self.assertEqual(len(result["1.0"]["1.0"]), 6)
+            self.assertAlmostEqual(result["1.0"]["1.0"][4], 2e-9)
+            self.assertEqual(len(result["1.0"]["2.0"]), 4)
+
+
 class TestSweepFilenames(unittest.TestCase):
     def test_roundtrip_current_tags(self):
         for run_mode in ("normal", "mass_only"):
@@ -944,7 +1041,7 @@ class TestPlotVegByParams(unittest.TestCase):
                     "1.0": {"1.0": [1.0, 5.0, 255.0, 1367.0]},
                 },
             )
-            rc = vegplot.main(["--dir", tmp, "--outdir", tmp])
+            rc = vegplot.main(["--dir", tmp, "--outdir", tmp, "--metric", "cells"])
             self.assertEqual(rc, 0)
             expected = [
                 "gpp_massonly_n2_earth.png",
@@ -956,6 +1053,39 @@ class TestPlotVegByParams(unittest.TestCase):
                 path = os.path.join(tmp, name)
                 self.assertTrue(os.path.isfile(path), name)
                 self.assertGreater(os.path.getsize(path), 1000)
+
+    def test_area_metrics_and_fallback_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Earth reference predates the area metrics: fall back to the
+            # fixed-pressure 1 M_earth sweep point.
+            self._write_json(os.path.join(tmp, ap.EARTH_REFERENCE_JSON),
+                             {"1.0": {"1.0": [1.0, 10.0, 255.0, 1367.0]}})
+            for mass, area, total in ((1.0, 2.0, 8.0), (2, 1.0, 12.0)):
+                self._write_json(
+                    os.path.join(tmp, ap.sweep_json_name(
+                        mass, run_mode="mass_only", atmos_type="n2", physics_mode="earth",
+                    )),
+                    {"1.0": {"1.0": [1.0, 9.0, 255.0, 1367.0, area, total]}},
+                )
+            groups = vegplot.discover(tmp)
+            key = ("mass_only", "n2", "earth", "T21", "")
+            self.assertIsNone(vegplot.load_earth_baseline(
+                os.path.join(tmp, ap.EARTH_REFERENCE_JSON), 4))
+            base, source = vegplot.fallback_baseline(groups, key, 4)
+            self.assertEqual(base, 2.0)
+            self.assertIn("_10_", source)
+            masses, data = vegplot.load_regime(groups[key])
+            self.assertAlmostEqual(vegplot.normalized_gpp(data, 2.0, "1.0", "1.0", 8.0, 5), 1.5)
+            rc = vegplot.main(["--dir", tmp, "--outdir", tmp])
+            self.assertEqual(rc, 0)
+            for name in ("gpp_massonly_n2_earth_perarea.png", "gpp_massonly_n2_earth_total.png"):
+                self.assertTrue(os.path.isfile(os.path.join(tmp, name)), name)
+
+    def test_missing_metric_is_nan_crash_is_zero(self):
+        data = {1.0: {"1.0": {"1.0": [1.0, 9.0, 255.0, 1367.0]}},
+                2.0: {"1.0": {"1.0": [None, None, 255.0, 1367.0, None, None]}}}
+        self.assertTrue(math.isnan(vegplot.normalized_gpp(data, 1.0, "1.0", "1.0", 1.0, 4)))
+        self.assertEqual(vegplot.normalized_gpp(data, 2.0, "1.0", "1.0", 1.0, 4), 0.0)
 
     def test_list_and_empty_dir(self):
         with tempfile.TemporaryDirectory() as tmp:

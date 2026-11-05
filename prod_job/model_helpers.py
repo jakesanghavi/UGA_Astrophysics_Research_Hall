@@ -11,6 +11,7 @@ from atmos_presets import (
     column_setup,
     co2_ppmv_from_params,
     default_ozone,
+    grid_workdir_suffix,
     mass_file_token,
     model_layers,
     model_precision,
@@ -26,7 +27,9 @@ from atmos_presets import (
     timestep_pressure_factor,
     total_pressure_bar,
 )
-from gpp_terms import CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record
+from gpp_terms import (
+    CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record, land_gpp_summary,
+)
 import sys
 import json
 import hashlib
@@ -629,7 +632,7 @@ def calculate_veg(
     # intermittent, weather- (and therefore seed-) dependent numerical
     # instability in PlaSim's surface-flux scheme ("negative z/z0"). Retry a
     # crashed run up to MAX_RETRIES times, each time with a fresh random seed AND
-    # a smaller timestep. If every attempt crashes, return [None, None] so the
+    # a smaller timestep. If every attempt crashes, the GPP entries are None so the
     # caller can tell a genuine crash apart from a real zero-vegetation result.
     planet = None
     for attempt in range(MAX_RETRIES + 1):
@@ -716,16 +719,12 @@ def calculate_veg(
                 startemp=startemp,
                 params=local_params,
             )
-        return [None, None]
+        return [None, None, None, None]
 
     veg = planet.inspect("veggpp", tavg=True)
-    land = planet.inspect('lsm')
-    land = np.sum(land, axis=0)
-    
-    land_mask = land > 0
-    masked_veg_values = veg[land_mask]
-    average_veg = np.mean(masked_veg_values)
-    tot_veg = np.sum(masked_veg_values)
+    lsm = planet.inspect("lsm")
+    lat = planet.inspect("lat")
+    average_veg, tot_veg, area_veg, planet_veg = land_gpp_summary(veg, lsm, lat, r_new)
 
     if diagnostics:
         return extract_gpp_diagnostics(
@@ -744,7 +743,7 @@ def calculate_veg(
             physics_mode=physics_mode,
         )
         
-    return [average_veg, tot_veg]
+    return [average_veg, tot_veg, area_veg, planet_veg]
 
 
 def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
@@ -779,8 +778,9 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
         pressure_scaling=pressure_scaling, co2_scaling=co2_scaling,
     )
     flux = stellar_mass_to_temp_flux(mstar, au)
-    veg_amt.append(flux[0])
-    veg_amt.append(flux[1])
+    # [avg, tot, startemp, flux, area_avg, planet_total]: the area metrics go
+    # last so readers of the original four entries are unaffected.
+    veg_amt = veg_amt[:2] + [flux[0], flux[1]] + veg_amt[2:]
     # A crashed run yields None for the vegetation entries (kept as JSON null),
     # which is distinct from a genuine 0.0 vegetation result.
     return [float(v) if v is not None else None for v in veg_amt]
@@ -788,7 +788,8 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
 
 def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
               atmos_type=None, physics_mode=None, atmos_params=None,
-              configure_kwargs=None, pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+              configure_kwargs=None, pressure_scaling="fixed", co2_scaling="mixing_ratio",
+              workdir_tag=""):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
     points        : explicit list of (mstar, au) tuples to evaluate. If None
@@ -803,6 +804,11 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     atmos_params  : optional partial-pressure overrides on the preset.
     configure_kwargs : extra exo.Model.configure() kwargs (ozone, rotationperiod, …).
     pressure_scaling, co2_scaling : see atmos_presets.PRESSURE_SCALINGS / CO2_SCALINGS.
+    workdir_tag   : prefix on the ExoPlaSim workdir, so a run that shares a
+                    sweep point's settings (the Earth reference) keeps its own output.
+
+    Each saved entry is [avg, tot, startemp, flux, area_avg, planet_total];
+    see gpp_terms.land_gpp_summary.
     """
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
@@ -830,13 +836,10 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         # previously crashed (vegetation stored as null).
         if existing is not None and existing[0] is not None:
             continue
-        # Unique workdir per task, planet mass and scaling scenario, since
-        # run_model.py runs mass_only masses concurrently.
-        safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
-        res_tag = "" if resolution == "T21" else f"{resolution}_"
-        workdir_suffix = (f"{res_tag}{atmos_type}_{physics_mode}"
-                          f"{scenario_tag(pressure_scaling, co2_scaling)}_"
-                          f"m{mass_file_token(mass_ratio)}_{safe}")
+        workdir_suffix = grid_workdir_suffix(
+            mass_ratio, ms, au_key, atmos_type, physics_mode, resolution,
+            pressure_scaling, co2_scaling, tag=workdir_tag,
+        )
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
     if not tasks:

@@ -130,6 +130,35 @@ def land_mask_from_lsm(lsm):
     return np.asarray(lsm) > 0
 
 
+EARTH_RADIUS_M = 6.371e6
+SECONDS_PER_YEAR = 3.15576e7
+GPP_METRIC_INDEX = {"cells": 1, "per_area": 4, "planet_total": 5}
+
+
+def land_gpp_summary(gpp, lsm, lat, radius_earth):
+    """[cell mean, cell sum, area mean, planet total] of land GPP.
+
+    The first two are the original sweep entries: every grid cell counts the
+    same, so the sum is the mean times the land-cell count and ignores planet
+    size. The area mean (kg C m-2 s-1) weights cells by cos(latitude). The
+    planet total (Pg C yr-1) is the area mean times land area, 4 pi R^2 times
+    the area-weighted land fraction. `radius_earth` is in Earth radii.
+    """
+    gpp = np.asarray(gpp, dtype=float)
+    if gpp.ndim == 3:
+        gpp = gpp.mean(axis=0)
+    land = land_mask_from_lsm(lsm)
+    weights = np.broadcast_to(
+        np.cos(np.radians(np.asarray(lat, dtype=float)))[:, None], gpp.shape,
+    )
+    cells = gpp[land]
+    area_mean = float(np.sum(cells * weights[land]) / np.sum(weights[land]))
+    land_frac = float(np.sum(weights[land]) / np.sum(weights))
+    radius_m = radius_earth * EARTH_RADIUS_M
+    total = area_mean * land_frac * 4.0 * np.pi * radius_m ** 2 * SECONDS_PER_YEAR / 1e12
+    return [float(np.mean(cells)), float(np.sum(cells)), area_mean, total]
+
+
 def _as_array(field):
     field = np.asarray(field, dtype=float)
     while field.ndim > 3:

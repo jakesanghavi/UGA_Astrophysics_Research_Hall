@@ -521,6 +521,25 @@ def scenario_tag(pressure_scaling="fixed", co2_scaling="mixing_ratio"):
     return f"_{_PRESSURE_TOKENS[scenario[0]]}_{_CO2_TOKENS[scenario[1]]}"
 
 
+WORKDIR_PREFIX = "custom_earthlike_model"
+
+
+def grid_workdir_suffix(mass, mstar, au, atmos_type, physics_mode, resolution="T21",
+                        pressure_scaling="fixed", co2_scaling="mixing_ratio", tag=""):
+    """Per-grid-point suffix of the ExoPlaSim workdir (`WORKDIR_PREFIX + suffix`).
+
+    Unique per mass and scaling scenario because mass_only masses run
+    concurrently. `tag` keeps the Earth reference out of the sweep's 1 M_earth
+    folder. `mass` may be the token from a sweep JSON name, since the mass was
+    written as given (2 -> "2", 2.0 -> "20").
+    """
+    safe = f"{mstar}_{au}".replace(".", "p").replace("-", "m")
+    res_tag = "" if resolution == "T21" else f"{resolution}_"
+    return (f"{tag}{res_tag}{atmos_type}_{physics_mode}"
+            f"{scenario_tag(pressure_scaling, co2_scaling)}_"
+            f"m{mass_file_token(mass)}_{safe}")
+
+
 def regime_file_tag(run_mode, atmos_type, physics_mode,
                     pressure_scaling="fixed", co2_scaling="mixing_ratio"):
     """Filename tag so composition/physics/scaling combos do not overwrite each other.
@@ -639,9 +658,11 @@ def parse_sweep_json_name(name, extra_masses=()):
     token_map = _mass_token_map(extra_masses)
     mass = None
     rest = None
+    mass_token = None
     for token in sorted(token_map, key=len, reverse=True):
         if stem.startswith(token) and stem[len(token):].startswith("_"):
             mass = token_map[token]
+            mass_token = token
             rest = stem[len(token):]
             break
     if rest is None:
@@ -650,6 +671,7 @@ def parse_sweep_json_name(name, extra_masses=()):
             return None
         token, mode_part, leftover = matched.group(1), matched.group(2), matched.group(3)
         mass = token_map.get(token, _mass_from_unknown_token(token))
+        mass_token = token
         rest = mode_part + leftover
     resolution = "T21"
     res_match = _RES_AT_END.search(rest)
@@ -661,6 +683,7 @@ def parse_sweep_json_name(name, extra_masses=()):
         return None
     parsed.update({
         "mass": mass,
+        "mass_token": mass_token,
         "resolution": resolution,
         "file_tag": rest,
         "name": base,

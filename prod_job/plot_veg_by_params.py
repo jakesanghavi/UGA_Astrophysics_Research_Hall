@@ -2,12 +2,18 @@
 """Bar-grid of Earth-normalized GPP from production sweep JSON.
 
 Discovers `16cpus_test_*.json` in a directory, groups them by
-(run_mode, atmos, physics, resolution), and writes
+(run_mode, atmos, physics, resolution, scenario), and writes
 
-    gpp_<mode>_<atmos>_<physics>[_<res>][_scale].png
+    gpp_<mode>_<atmos>_<physics>[_<scenario>][_<res>][_scale]_<metric>.png
+
+Metrics (--metric, default per_area and planet_total):
+    cells         unweighted sum over land cells (no suffix; ignores planet size)
+    per_area      GPP per m^2 of land, cells weighted by cos(latitude)  (_perarea)
+    planet_total  per_area times the planet's land area                 (_total)
 
     python plot_veg_by_params.py
     python plot_veg_by_params.py --atmos n2 --mode mass_only
+    python plot_veg_by_params.py --metric cells
     python plot_veg_by_params.py --list
 """
 
@@ -23,6 +29,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from gpp_terms import GPP_METRIC_INDEX
 from atmos_presets import (
     EARTH_REFERENCE_JSON,
     iter_sweep_json,
@@ -33,6 +40,18 @@ from atmos_presets import (
 )
 
 VALUE_INDEX = 1
+DEFAULT_METRICS = ("per_area", "planet_total")
+METRIC_SUFFIX = {"cells": "", "per_area": "_perarea", "planet_total": "_total"}
+METRIC_YLABEL = {
+    "cells": "GPP / Earth",
+    "per_area": "GPP per m$^2$ land / Earth",
+    "planet_total": "Planet GPP / Earth",
+}
+METRIC_TITLE = {
+    "cells": "Gross Primary Production, land-cell sum (Earth = 1)",
+    "per_area": "Gross Primary Production per unit land area (Earth = 1)",
+    "planet_total": "Gross Primary Production, whole planet (Earth = 1)",
+}
 
 _STYLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper.mplstyle")
 if os.path.exists(_STYLE):
@@ -58,10 +77,18 @@ def parse_args(argv=None):
         help=f"Earth baseline JSON (default: <dir>/{EARTH_REFERENCE_JSON})",
     )
     parser.add_argument(
+        "--metric",
+        nargs="+",
+        choices=tuple(GPP_METRIC_INDEX),
+        default=list(DEFAULT_METRICS),
+        help="per_area / planet_total / cells (default: per_area planet_total)",
+    )
+    parser.add_argument(
         "--value-index",
         type=int,
-        default=VALUE_INDEX,
-        help="JSON entry index: 0 avg GPP, 1 tot GPP (default 1)",
+        default=None,
+        help="raw JSON entry index, overrides --metric (0 avg, 1 cell sum, "
+             "4 per-area, 5 planet total)",
     )
     parser.add_argument("--list", action="store_true", help="print discovered files and exit")
     return parser.parse_args(argv)
@@ -83,14 +110,15 @@ def regime_label(run_mode, atmos, physics, resolution="T21", scenario=""):
     return " ".join(bits)
 
 
-def plot_basename(run_mode, atmos, physics, resolution="T21", scale=None, scenario=""):
+def plot_basename(run_mode, atmos, physics, resolution="T21", scale=None, scenario="",
+                  metric="cells"):
     mode = "massonly" if run_mode == "mass_only" else "normal"
     name = f"gpp_{mode}_{atmos}_{physics}{scenario}"
     if resolution and resolution != "T21":
         name += f"_{resolution}"
     if scale:
         name += f"_{scale}"
-    return name + ".png"
+    return name + METRIC_SUFFIX.get(metric, "") + ".png"
 
 
 def discover(directory):
@@ -130,30 +158,50 @@ def load_regime(records):
     return masses, data
 
 
-def load_earth_baseline(path, value_index):
-    if not path or not os.path.exists(path):
-        print(f"Warning: {path or EARTH_REFERENCE_JSON} not found; GPP will not be "
-              "normalized to Earth (using 1.0).")
-        return 1.0
-    with open(path) as handle:
-        ref = json.load(handle)
-    for by_au in ref.values():
+def first_value(payload, value_index):
+    for by_au in payload.values():
         for entry in by_au.values():
-            base = entry[value_index]
+            if len(entry) > value_index and entry[value_index]:
+                return entry[value_index]
+    return None
+
+
+def load_earth_baseline(path, value_index):
+    """Baseline from the Earth reference JSON, or None if it lacks this entry."""
+    if not path or not os.path.exists(path):
+        return None
+    with open(path) as handle:
+        return first_value(json.load(handle), value_index)
+
+
+def fallback_baseline(groups, key, value_index):
+    """1 M_earth point of the fixed-pressure sweep matching `key`, else of `key` itself.
+
+    Used when earth_reference.json predates the area metrics.
+    """
+    run_mode, atmos, physics, resolution, _scenario = key
+    for candidate in ((run_mode, atmos, physics, resolution, ""), key):
+        for rec in groups.get(candidate, []):
+            if rec["mass"] != 1.0:
+                continue
+            with open(rec["path"]) as handle:
+                base = first_value(json.load(handle), value_index)
             if base:
-                return base
-    print(f"Warning: no usable baseline in {path}; using 1.0.")
-    return 1.0
+                return base, rec["name"]
+    return None, None
 
 
 def normalized_gpp(data, mass, mstar, au, norm, value_index):
+    """Crashed (null) points plot as 0; entries without this metric are NaN (no bar)."""
     try:
-        val = data[mass][mstar][au][value_index]
-    except (KeyError, IndexError, TypeError):
+        entry = data[mass][mstar][au]
+    except (KeyError, TypeError):
         return 0.0
-    if val is None:
+    if entry[0] is None:
         return 0.0
-    return val / norm
+    if len(entry) <= value_index or entry[value_index] is None:
+        return float("nan")
+    return entry[value_index] / norm
 
 
 def star_rows(data):
@@ -176,7 +224,7 @@ def au_columns(data, rows):
 
 
 def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=False,
-              title="", outfile="", annotate=False):
+              title="", outfile="", annotate=False, metric="cells"):
     rows = rows or star_rows(data)
     per_star = au_columns(data, rows)
     ncols = max((len(aus) for aus in per_star.values()), default=1)
@@ -206,8 +254,8 @@ def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=Fal
                 for mass in masses
             ])
             values = np.clip(values, 1e-20, None)
-            all_values.extend(values)
-            global_max = max(global_max, values.max())
+            all_values.extend(values[np.isfinite(values)])
+            global_max = max(global_max, np.nanmax(values, initial=-np.inf))
 
             bars = ax.bar(x, values)
             ax.axhline(1.0, color="0.4", lw=0.8, ls="--")
@@ -221,7 +269,7 @@ def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=Fal
                 ax.set_xticklabels(masses, rotation=90)
                 ax.set_xlabel(r"Planet mass [$M_\oplus$]")
             if j == 0:
-                ax.set_ylabel("GPP / Earth")
+                ax.set_ylabel(METRIC_YLABEL.get(metric, "GPP / Earth"))
             if yscale == "log":
                 ax.set_yscale("log")
 
@@ -235,7 +283,8 @@ def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=Fal
             for ax in row:
                 ax.set_ylim(ymin, ymax)
 
-    fig.suptitle(f"Gross Primary Production (Earth = 1)\n{title}")
+    heading = METRIC_TITLE.get(metric, "Gross Primary Production (Earth = 1)")
+    fig.suptitle(f"{heading}\n{title}")
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     plt.savefig(outfile)
     plt.close(fig)
@@ -244,16 +293,16 @@ def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=Fal
 
 
 def plot_regime(masses, data, run_mode, atmos, physics, resolution, norm,
-                value_index, outdir, scenario=""):
+                value_index, outdir, scenario="", metric="cells"):
     rows = star_rows(data)
     title = regime_label(run_mode, atmos, physics, resolution, scenario)
     written = []
     if run_mode == "mass_only":
         path = os.path.join(outdir, plot_basename(run_mode, atmos, physics, resolution,
-                                                  scenario=scenario))
+                                                  scenario=scenario, metric=metric))
         written.append(plot_grid(
             data, masses, rows, norm, value_index,
-            yscale="linear", title=title, outfile=path, annotate=True,
+            yscale="linear", title=title, outfile=path, annotate=True, metric=metric,
         ))
         return written
 
@@ -263,11 +312,12 @@ def plot_regime(masses, data, run_mode, atmos, physics, resolution, norm,
         ("indep_linear", "linear", False),
     ):
         path = os.path.join(
-            outdir, plot_basename(run_mode, atmos, physics, resolution, scale, scenario),
+            outdir, plot_basename(run_mode, atmos, physics, resolution, scale, scenario,
+                                  metric),
         )
         written.append(plot_grid(
             data, masses, rows, norm, value_index,
-            yscale=yscale, sharey=sharey, title=title, outfile=path,
+            yscale=yscale, sharey=sharey, title=title, outfile=path, metric=metric,
         ))
     return written
 
@@ -327,14 +377,38 @@ def main(argv=None):
         return 1
 
     earth_ref = args.earth_ref or os.path.join(directory, EARTH_REFERENCE_JSON)
-    norm = load_earth_baseline(earth_ref, args.value_index)
+    if args.value_index is not None:
+        plans = [("cells", args.value_index)]
+    else:
+        plans = [(metric, GPP_METRIC_INDEX[metric]) for metric in args.metric]
 
-    for (run_mode, atmos, physics, resolution, scenario), records in sorted(groups.items()):
-        masses, data = load_regime(records)
-        plot_regime(
-            masses, data, run_mode, atmos, physics, resolution,
-            norm, args.value_index, outdir, scenario=scenario,
-        )
+    announced = set()
+    for metric, value_index in plans:
+        ref_norm = load_earth_baseline(earth_ref, value_index)
+        for key, records in sorted(groups.items()):
+            run_mode, atmos, physics, resolution, scenario = key
+            norm = ref_norm
+            if norm is None:
+                norm, source = fallback_baseline(found, key, value_index)
+                if norm is None:
+                    print(f"Warning: no {metric} baseline for {regime_label(*key)}; "
+                          "plotting raw values. Run backfill_area_gpp.py?")
+                    norm = 1.0
+                elif (metric, source) not in announced:
+                    announced.add((metric, source))
+                    print(f"{metric}: {os.path.basename(earth_ref)} has no value; "
+                          f"Earth = {source}")
+            masses, data = load_regime(records)
+            missing = [m for m in masses
+                       if any(np.isnan(normalized_gpp(data, m, ms, au, 1.0, value_index))
+                              for ms, by_au in data[m].items() for au in by_au)]
+            if missing:
+                print(f"Warning: {regime_label(*key)} has no {metric} value for "
+                      f"masses {missing}; run backfill_area_gpp.py")
+            plot_regime(
+                masses, data, run_mode, atmos, physics, resolution,
+                norm, value_index, outdir, scenario=scenario, metric=metric,
+            )
     return 0
 
 

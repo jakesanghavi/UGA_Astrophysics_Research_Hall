@@ -94,14 +94,24 @@ fixed pressure then mass-scaled pressure with each CO2 scaling; see
 
 Regardless of `RUN_MODE`, every run first computes an **Earth reference**
 (1 Earth-mass planet at 1 AU around a 1 solar-mass star) and stores it in
-`earth_reference.json`, giving a known-normal point to compare against.
+`earth_reference.json`, giving a known-normal point to compare against. Its
+workdir has a `ref_` prefix so the sweep's 1 M⊕ run does not overwrite it.
+
+Each JSON entry is `[avg, tot, startemp, flux, area_avg, planet_total]`.
+`avg` / `tot` count every land grid cell equally, so `tot` is `avg` times the
+land-cell count and ignores planet size. `area_avg` weights cells by
+cos(latitude) (kg C m⁻² s⁻¹); `planet_total` is `area_avg` times land area,
+4πR² × land fraction (Pg C yr⁻¹). `backfill_area_gpp.py` adds the last two to
+older JSON from each run's final-year NetCDF, skipping any workdir whose
+output no longer matches the stored `avg`.
 
 ### Plotting
 
 `plot_veg_by_params.py` (run from `prod_job/`) discovers `16cpus_test_*.json`
-files, groups them by run mode / mix / physics, and writes
-`gpp_<mode>_<atmos>_<physics>[_scale].png`. Crashed (`null`) points plot as
-zero. Use `--atmos` / `--mode` / `--physics` to plot one regime, or `--list`
+files, groups them by run mode / mix / physics / scenario, and writes
+`gpp_<mode>_<atmos>_<physics>[_<scenario>][_scale]_<perarea|total>.png`
+(`--metric cells` gives the old unsuffixed land-cell sum). Crashed (`null`)
+points plot as zero; entries missing a metric get no bar. Use `--atmos` / `--mode` / `--physics` to plot one regime, or `--list`
 to show what is on disk. See `RUN_INSTRUCTIONS.md`.
 
 ## Testing
@@ -159,7 +169,7 @@ an intermittent, seed-dependent numerical instability in PlaSim's surface-flux
 scheme (`negative z/z0`), which crashes the run. `calculate_veg` retries a
 crashed run up to `MAX_RETRIES` (default 2) times with a fresh random seed. If
 every attempt still crashes, the grid point's vegetation entries are recorded as
-JSON `null` (`[null, null, startemp, flux]`), which is distinct from a genuine
+JSON `null` (`[null, null, startemp, flux, null, null]`), which is distinct from a genuine
 zero-vegetation result (`[0.0, 0.0, ...]`). On a rerun, successfully-computed
 points are skipped but `null` (crashed) points are re-attempted.
 
