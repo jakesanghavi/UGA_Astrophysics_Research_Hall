@@ -92,6 +92,67 @@ So two regimes do not overwrite the same JSON:
 `plot_veg_by_params.py` still reads the old `_massonly2` / `_massonly`
 names as `n2` + earth. Non-T21 files get `_Txx` before `.json`.
 
+## Surface pressure
+
+Surface pressure is the sum of the preset's partial pressures. ExoPlaSim
+writes that sum to `PSURF`. Gravity and radius do not enter it. Every
+planet mass gets the same pressure (1.01 bar for `n2` / `evolved`).
+`PRESSURE_FRACTION` in `model_helpers.py` scales all partial pressures by
+one factor; it is 1 and not tied to mass.
+
+Fixed pressure means the amount of air changes with mass. Column mass is
+P/g; total atmosphere is P·4πR²/g.
+
+| Mass (M⊕) | g (m/s²) | column vs Earth | total vs Earth | atm / planet mass vs Earth |
+|---|---|---|---|---|
+| 0.1 | 3.52 | 2.8× | 0.77× | 7.8× |
+| 0.5 | 7.11 | 1.4× | 0.95× | 1.9× |
+| 1.0 | 9.62 | 1.0× | 1.04× | 1.04× |
+| 2.0 | 13.01 | 0.75× | 1.14× | 0.57× |
+
+The alternative convention, the same atmosphere mass fraction for every
+planet, gives P ∝ M²/R⁴ ≈ M^0.87 with the Noack radius (~0.13 bar at
+0.1 M⊕, ~1.8 bar at 2 M⊕). Not implemented.
+
+## H/He envelope (`evolved`)
+
+As of 2026-10-30 the envelope has no effect on the climate. Every mass
+gets 1e-13 to 1e-12 bar of H2 + He, so `evolved` runs are effectively `n2`
+runs. The causes:
+
+- Core-powered loss in `atm_mass_frac.evolve_atmosphere` reduces to
+  `eta * M_atm / t_KH`, and `t_KH` depends only on M_atm/M_c. Every mass
+  ends at M_atm/M_c = 1.94e-3 at 4.5 Gyr (81% of the initial 1% lost).
+- `photoevaporation_rate_paper` uses the Picogna et al. (2019) wind
+  profile, which describes X-ray winds from protoplanetary disks, times the
+  planet cross-section. It removes ~1e-16 of the envelope. Planetary escape
+  is usually energy-limited, `eps * pi * R_p**3 * F_XUV / (G * M_p)`.
+- The Bondi limit (`t_cool >= t_Bondi` stops core-powered loss) is
+  commented out. With it on, nothing is lost at 1 AU and every planet keeps
+  M_atm/M_c = 0.01.
+- `core_radius_noack` in `atm_mass_frac.py` takes kg but is passed Earth
+  masses, so R_c is ~1 m. R_c cancels in the loss rate, so results are
+  unaffected.
+- `calculate_veg` divides the core mass by `mass_ratio` before
+  `calc_f_ret_big_rcb` (eq. 28, apparently Ginzburg et al. 2016), so f_ret
+  uses a core of CMF·M⊕ for every planet: 1.8e-11 at all masses. With the
+  core scaled to the planet it runs from 3e-17 (0.1 M⊕) to 1.7e-7
+  (2 M⊕). `vegetation_modeling/h_he_retention.py` normalized f_ret to its
+  value at 2 M⊕; production does not.
+- f_ret multiplies the evolved M_atm/M_c. Both are envelope mass fractions.
+  f_ret describes the envelope left after disk dispersal and belongs in
+  the initial condition, not as a factor on the end state.
+- The pressure `G * M_p * M_env / (4 * pi * R_p**4)` is in Pa and is
+  multiplied by `1e-10`. Pa→bar is `1e-5`.
+
+With correct units and no f_ret factor, 1.94e-3 of the core mass gives
+~70 bar (0.1 M⊕) to ~1000 bar (2 M⊕) of H/He. Those are sub-Neptunes that
+ExoPlaSim cannot run. The planned rebuild uses f_ret (or a cited
+post-dispersal fraction) as the starting envelope, energy-limited XUV
+escape, a decision on the Bondi limit, and correct units. Masses that keep
+an envelope are classed as not Earth-like; masses that lose it get an
+Earth-like secondary atmosphere and a GPP run.
+
 ## SIMBA
 
 SIMBA (`simba.f90` `vegstep`) is an Earth vegetation scheme. It will run on
