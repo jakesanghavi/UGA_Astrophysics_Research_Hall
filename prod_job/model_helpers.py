@@ -14,6 +14,9 @@ from atmos_presets import (
     mass_file_token,
     model_layers,
     model_precision,
+    resolve_co2_scaling,
+    resolve_pressure_scaling,
+    scale_partial_pressures,
     resolve_atmos_type,
     resolve_physics_mode,
     snap_timestep_min,
@@ -201,6 +204,22 @@ def planet_bulk(mass_ratio):
     return {"radius": radius, "gravity": gravity}
 
 
+def atmosphere_scale_factors(mass_ratio, pressure_scaling="fixed"):
+    """(pressure_factor, gravity_factor) relative to the 1 M_earth planet.
+
+    mass scaling keeps M_atm / M_p fixed, so P = M_atm g / (4 pi R^2) goes as
+    M^2 / R^4. Normalizing to the code's own 1 M_earth planet (R = 1.01,
+    g = 9.62 with the Noack radius) keeps 1 M_earth at the preset pressure.
+    """
+    bulk = planet_bulk(mass_ratio)
+    ref = planet_bulk(1.0)
+    gravity_factor = bulk["gravity"] / ref["gravity"]
+    if resolve_pressure_scaling(pressure_scaling) == "fixed":
+        return 1.0, gravity_factor
+    pressure_factor = mass_ratio ** 2 * (ref["radius"] / bulk["radius"]) ** 4
+    return pressure_factor, gravity_factor
+
+
 def planet_timestep(gravity, attempt=0, p_surf_bar=1.0):
     """PlaSim timestep [min], scaled with g and P, halved on each crash retry.
 
@@ -290,7 +309,7 @@ planet_params = {
         'pHe': 5.24e-6,
         'pN2': 0.78084,
         'pO2': 0.20946,
-        'pCO2': 330.0e-6,
+        'pCO2': 400.0e-6,
         'pAr': 9.34e-3,
         'pNe': 18.18e-6,
         'pKr': 1.14e-6,
@@ -466,6 +485,8 @@ def calculate_veg(
     atmos_params=None,
     diagnostics=False,
     configure_kwargs=None,
+    pressure_scaling="fixed",
+    co2_scaling="mixing_ratio",
 ):
     bulk = planet_bulk(mass_ratio)
     r_new = bulk["radius"]
@@ -486,6 +507,9 @@ def calculate_veg(
         for gas_key in GAS_KEYS:
             if gas_key in local_params:
                 local_params[gas_key] *= PRESSURE_FRACTION
+    pressure_factor, gravity_factor = atmosphere_scale_factors(mass_ratio, pressure_scaling)
+    scale_partial_pressures(local_params, pressure_factor, gravity_factor,
+                            co2_scaling=resolve_co2_scaling(co2_scaling))
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
@@ -550,6 +574,8 @@ def calculate_veg(
     thermo = thermo_from_params(local_params)
     print(
         f"[calculate_veg] atmos={atmos_type} physics={physics_mode} "
+        f"pressure_scaling={pressure_scaling} co2_scaling={co2_scaling} "
+        f"pCO2={local_params.get('pCO2', 0.0) * 1e6:.1f} ubar "
         f"P={p_surf:.5g} bar modeltop={local_params.get('modeltop', 'default')} "
         f"vtype={local_params.get('vtype', 'default')} "
         f"drycore={local_params.get('drycore', False)} "
@@ -688,7 +714,8 @@ def calculate_veg(
 
 
 def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
-                    physics_mode=None, atmos_params=None, configure_kwargs=None):
+                    physics_mode=None, atmos_params=None, configure_kwargs=None,
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
     """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
     return calculate_veg(
         mass_ratio,
@@ -701,17 +728,21 @@ def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_typ
         atmos_params=atmos_params,
         diagnostics=True,
         configure_kwargs=configure_kwargs,
+        pressure_scaling=pressure_scaling,
+        co2_scaling=co2_scaling,
     )
 
 
 def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
-                atmos_type, physics_mode, atmos_params, configure_kwargs=None):
+                atmos_type, physics_mode, atmos_params, configure_kwargs=None,
+                pressure_scaling="fixed", co2_scaling="mixing_ratio"):
     """Compute a single grid point. Runs inside a worker process for isolation
     (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
     veg_amt = calculate_veg(
         mass_ratio, mstar, au, resolution, workdir_suffix,
         atmos_type=atmos_type, physics_mode=physics_mode, atmos_params=atmos_params,
         configure_kwargs=configure_kwargs,
+        pressure_scaling=pressure_scaling, co2_scaling=co2_scaling,
     )
     flux = stellar_mass_to_temp_flux(mstar, au)
     veg_amt.append(flux[0])
@@ -723,7 +754,7 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
 
 def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
               atmos_type=None, physics_mode=None, atmos_params=None,
-              configure_kwargs=None):
+              configure_kwargs=None, pressure_scaling="fixed", co2_scaling="mixing_ratio"):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
     points        : explicit list of (mstar, au) tuples to evaluate. If None
@@ -737,6 +768,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     physics_mode  : earth / mars / other.
     atmos_params  : optional partial-pressure overrides on the preset.
     configure_kwargs : extra exo.Model.configure() kwargs (ozone, rotationperiod, …).
+    pressure_scaling, co2_scaling : see atmos_presets.PRESSURE_SCALINGS / CO2_SCALINGS.
     """
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
@@ -788,6 +820,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         _save(ms, au_key, _grid_point(
             mass_ratio, mstar, au, resolution, workdir_suffix,
             atmos_type, physics_mode, atmos_params, configure_kwargs,
+            pressure_scaling, co2_scaling,
         ))
     except Exception as e:
         print(f"Error! ({ms}, {au_key}): {e}")
@@ -802,6 +835,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
                 _save(ms, au_key, _grid_point(
                     mass_ratio, mstar, au, resolution, workdir_suffix,
                     atmos_type, physics_mode, atmos_params, configure_kwargs,
+                    pressure_scaling, co2_scaling,
                 ))
             except Exception as e:
                 print(f"Error! ({ms}, {au_key}): {e}")
@@ -813,6 +847,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             pool.submit(
                 _grid_point, mass_ratio, mstar, au, resolution, workdir_suffix,
                 atmos_type, physics_mode, atmos_params, configure_kwargs,
+                pressure_scaling, co2_scaling,
             ): (ms, au_key)
             for ms, au_key, mstar, au, workdir_suffix in remaining
         }

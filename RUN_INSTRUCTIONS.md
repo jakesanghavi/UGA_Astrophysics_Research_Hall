@@ -59,9 +59,10 @@ masses in order and parallelize the stars and HZ distances within each mass.
 Edit the constants at the top. Then `python run_model.py`.
 
 `RUN_CONFIGS` is a list. Each entry runs a full mass sweep, then the next
-entry starts. Default is `venus_surface` then `mars_surface` (overnight:
-92 bar Venus mix, then 6.36 mbar Mars mix). Earth reference still runs once
-first (`n2`, earth physics).
+entry starts. Default is four `n2` mass_only sweeps: fixed pressure, then
+mass-scaled pressure with `mixing_ratio`, `partial_pressure`, and
+`surface_area` CO2. Earth reference still runs once first (`n2`, earth
+physics, fixed pressure; identical to every scaling at 1 M⊕).
 
 | Switch | Values | Effect |
 |---|---|---|
@@ -70,9 +71,15 @@ first (`n2`, earth physics).
 | `MASS_RATIOS` | `[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2]` | Planet masses in M⊕. Leave the committed list alone; subset only in a throwaway script |
 
 Per-config optional keys: `physics_mode`, `atmos_params`, `ozone`, `run_mode`,
-`rotationperiod`, `synchronous`, `obliquity`, `extras`. Omitted physics/ozone:
+`pressure_scaling`, `co2_scaling`, `rotationperiod`, `synchronous`,
+`obliquity`, `extras`. Omitted physics/ozone:
 `other` and no ozone for CO2-dominated presets; `earth` and ozone for `n2` /
 `evolved`. Earth day is written unless overridden.
+
+| Key | Values | Effect |
+|---|---|---|
+| `pressure_scaling` | `"fixed"` (default) / `"mass"` | `mass`: every partial pressure × M²/R⁴, normalized to the 1 M⊕ planet (P ≈ 1.01 bar × M^0.872) |
+| `co2_scaling` | `"mixing_ratio"` (default) / `"partial_pressure"` / `"surface_area"` | CO2 scales with the other gases / keeps the preset's pCO2 / scales with g (CO2 mass ∝ R²) |
 
 Gravity, radius, timestep, and (for `evolved`) leftover H/He still follow
 planet mass inside `calculate_veg`. Timestep also shrinks when surface P is
@@ -101,7 +108,18 @@ Every `run_model.py` invocation first writes `earth_reference.json`: 1 M⊕ at
 
 ## Typical specs
 
-Default overnight (committed):
+Default (committed), with `RUN_MODE = "mass_only"`:
+
+```
+RUN_CONFIGS = [
+    {"atmos_type": "n2"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "mixing_ratio"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "partial_pressure"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "surface_area"},
+]
+```
+
+Venus then Mars surface pressure:
 
 ```
 RUN_CONFIGS = [
@@ -145,7 +163,12 @@ T21 has no resolution suffix; T42 is `_T42` before `.json`.
 | earth physics | `_normal_<atmos>` | `_massonly_<atmos>` |
 | other / mars physics | `_normal_<atmos>_<physics>` | `_massonly_<atmos>_<physics>` |
 
+Non-default `pressure_scaling` / `co2_scaling` append `_pfix|_pmass` and
+`_co2mix|_co2pp|_co2area`; `plot_veg_by_params.py` plots each scenario
+separately (`gpp_massonly_n2_earth_pmass_co2pp.png`).
+
 Examples: `16cpus_test_10_normal_n2.json`, `16cpus_test_10_massonly_n2.json`,
+`16cpus_test_01_massonly_n2_pmass_co2pp.json`,
 `16cpus_test_15_massonly_co2_other.json`. Older `_massonly2` / `_massonly`
 files are still read as `n2` + earth.
 

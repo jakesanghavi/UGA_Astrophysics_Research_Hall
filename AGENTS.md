@@ -80,14 +80,17 @@ runtime, is committed, so no copy step is needed.)
 ### Run modes and the Earth reference
 
 `run_model.py` has `RUN_MODE` and a `RUN_CONFIGS` list. Each list entry is one
-atmosphere sweep; they run in order (default: `venus_surface` then
-`mars_surface`).
+atmosphere sweep; they run in order (default: four `n2` mass_only sweeps,
+fixed pressure then mass-scaled pressure with each CO2 scaling; see
+`ATMOSPHERES.md` "Surface pressure").
 
 - `"normal"` — the full sweep over stellar masses (`MSTARS`) and each star's
   habitable-zone distances. Output: `16cpus_test_<mass>_normal_<atmos>.json`
   (plus `_<physics>` when physics is not earth).
 - `"mass_only"` — vary planet mass only; every planet sits at 1 AU around a
   1 solar-mass star. Output: `16cpus_test_<mass>_massonly_<atmos>.json`.
+  Non-default scaling adds `_pmass_co2mix` / `_pmass_co2pp` / `_pmass_co2area`
+  (or `_pfix_...`).
 
 Regardless of `RUN_MODE`, every run first computes an **Earth reference**
 (1 Earth-mass planet at 1 AU around a 1 solar-mass star) and stores it in
@@ -159,7 +162,7 @@ points are skipped but `null` (crashed) points are re-attempted.
 
 As a more deterministic stability aid, `calculate_veg` also scales the model
 timestep down with surface gravity (`BASE_TIMESTEP_MIN * g/g_earth`) and with
-how far surface pressure is from 1 bar (identity between 0.5 and 2 bar; 5 min
+how far surface pressure is from 1 bar (identity between 0.1 and 2 bar; 5 min
 at 6.36 mbar; 1.5 min above 10 bar). Retries halve it again. The step is
 snapped to the largest 1440-minute-day divisor within 10% above the target
 (so 1 M⊕, g = 9.62, keeps 45 min) and floored at `MIN_TIMESTEP_MIN` (3 min),
@@ -168,8 +171,9 @@ finer step because scale height and the surface-flux lowest-layer height both
 go as 1/g. Extreme P needs a finer step because PlaSim's 45 min default is
 tuned for ~1 bar. Near-Earth g and ~1 bar are unchanged (scale ≈ 1).
 
-`venus_surface` / `mars_surface` also change the vertical grid: Mars lid at
-5% of P (the default 50 mbar lid is below a 6.36 mbar surface); Venus lid
+Between 0.1 and 2 bar the column keeps ExoPlaSim's default grid (`vtype=0`,
+top interface at ~7.7% of P at any pressure). `venus_surface` /
+`mars_surface` change it: Mars lid pinned at 5% of P (`vtype=4`); Venus lid
 stays 50 mbar with `vtype=3` so the photosphere is still in the column.
 Above 10 bar the column also gets 20 layers and a VIRA-like starting profile
 (`TGR`/`DTROP`/`ALR`), following the LMD Venus GCM, and a 2 m top soil layer

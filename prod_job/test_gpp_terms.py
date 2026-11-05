@@ -176,8 +176,10 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(attr["dln"]["beta"], 0.0)
 
     def test_beta_dominates_n2_vs_co2_if_climate_fixed(self):
+        # 280 ppm keeps beta below its cap of 1; the 400 ppm Earth mix is
+        # already capped, so it would not differ from the CO2 mix.
         n2 = {
-            "beta": gt.beta_co2(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)),
+            "beta": gt.beta_co2(280.0),
             "fT": 1.0, "fPAR": 0.5, "SWdn": 200.0, "gpp": 1.0, "crashed": False,
         }
         co2 = dict(n2)
@@ -314,7 +316,7 @@ class TestPresets(unittest.TestCase):
         params["pN2"] = 99.0
         ap.apply_atmos_preset(params, "n2")
         self.assertAlmostEqual(params["pN2"], ap.EARTHLIKE_GASES["pN2"])
-        self.assertAlmostEqual(params["pCO2"], 330.0e-6)
+        self.assertAlmostEqual(params["pCO2"], 400.0e-6)
 
     def test_aliases_and_mars_preset(self):
         self.assertEqual(ap.resolve_atmos_type("earth"), "n2")
@@ -484,7 +486,7 @@ class TestRunConfigs(unittest.TestCase):
         self.assertEqual(cfg["extras"]["vtype"], 0)
         self.assertFalse(cfg["extras"]["drycore"])
 
-    def test_run_model_default_is_surface_sequence(self):
+    def test_run_model_default_is_n2_scaling_sequence(self):
         path = os.path.join(os.path.dirname(__file__), "run_model.py")
         with open(path) as handle:
             tree = ast.parse(handle.read(), filename=path)
@@ -498,15 +500,64 @@ class TestRunConfigs(unittest.TestCase):
                 raw = ast.literal_eval(node.value)
             if "RUN_MODE" in names:
                 mode = ast.literal_eval(node.value)
-        self.assertEqual(raw, [
-            {"atmos_type": "venus_surface"},
-            {"atmos_type": "mars_surface"},
-        ])
         cfgs = ap.resolve_run_configs(raw, default_run_mode=mode)
-        self.assertEqual(cfgs[0]["physics_mode"], "other")
-        self.assertEqual(cfgs[1]["physics_mode"], "other")
-        self.assertFalse(cfgs[0]["ozone"])
-        self.assertFalse(cfgs[1]["ozone"])
+        self.assertEqual(mode, "mass_only")
+        self.assertTrue(all(c["atmos_type"] == "n2" for c in cfgs))
+        self.assertTrue(all(c["physics_mode"] == "earth" and c["ozone"] for c in cfgs))
+        self.assertEqual(
+            [(c["pressure_scaling"], c["co2_scaling"]) for c in cfgs],
+            [("fixed", "mixing_ratio"), ("mass", "mixing_ratio"),
+             ("mass", "partial_pressure"), ("mass", "surface_area")],
+        )
+        tags = {ap.regime_file_tag(mode, c["atmos_type"], c["physics_mode"],
+                                   c["pressure_scaling"], c["co2_scaling"]) for c in cfgs}
+        self.assertEqual(len(tags), len(cfgs))
+
+
+class TestAtmosphereScaling(unittest.TestCase):
+    def _scaled(self, pressure_factor, gravity_factor, co2_scaling):
+        params = dict(ap.EARTHLIKE_GASES)
+        ap.scale_partial_pressures(params, pressure_factor, gravity_factor, co2_scaling)
+        return params
+
+    def test_mixing_ratio_scales_everything(self):
+        params = self._scaled(0.5, 0.7, "mixing_ratio")
+        self.assertAlmostEqual(ap.total_pressure_bar(params),
+                               0.5 * ap.total_pressure_bar(ap.EARTHLIKE_GASES), places=12)
+        self.assertAlmostEqual(ap.co2_ppmv_from_params(params),
+                               ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES), places=9)
+
+    def test_partial_pressure_keeps_co2(self):
+        params = self._scaled(0.5, 0.7, "partial_pressure")
+        self.assertAlmostEqual(params["pCO2"], ap.EARTHLIKE_GASES["pCO2"], places=15)
+        self.assertAlmostEqual(params["pN2"], 0.5 * ap.EARTHLIKE_GASES["pN2"], places=15)
+
+    def test_surface_area_scales_co2_with_gravity(self):
+        params = self._scaled(0.5, 0.7, "surface_area")
+        self.assertAlmostEqual(params["pCO2"], 0.7 * ap.EARTHLIKE_GASES["pCO2"], places=15)
+
+    def test_unknown_names_rejected(self):
+        with self.assertRaises(ValueError):
+            ap.resolve_pressure_scaling("radius")
+        with self.assertRaises(ValueError):
+            ap.resolve_co2_scaling("volume")
+
+    def test_tags_round_trip_and_default_has_no_suffix(self):
+        self.assertEqual(ap.regime_file_tag("mass_only", "n2", "earth"), "_massonly_n2")
+        for p in ap.PRESSURE_SCALINGS:
+            for c in ap.CO2_SCALINGS:
+                tag = ap.regime_file_tag("mass_only", "n2", "earth", p, c)
+                parsed = ap.parse_regime_tag(tag)
+                self.assertEqual((parsed["pressure_scaling"], parsed["co2_scaling"]), (p, c))
+                self.assertEqual(parsed["atmos"], "n2")
+        parsed = ap.parse_sweep_json_name("16cpus_test_15_massonly_co2_other_pmass_co2pp.json")
+        self.assertEqual((parsed["atmos"], parsed["physics"], parsed["mass"]), ("co2", "other", 1.5))
+
+    def test_mass_scaled_pressure_stays_on_default_grid(self):
+        p = 1.01 * 0.1 ** (2 - 4 * 0.282)
+        self.assertGreater(p, 0.1)
+        self.assertEqual(ap.column_setup(p, p_h2o_bar=0.01 * p), {})
+        self.assertEqual(ap.timestep_pressure_factor(p), 1.0)
 
 
 class TestColumnSetup(unittest.TestCase):
@@ -580,6 +631,15 @@ except Exception:  # exoplasim not installed
 
 @unittest.skipIf(mh is None, "model_helpers needs exoplasim")
 class TestPlanetTimestepAndBuild(unittest.TestCase):
+    def test_mass_scaling_factors(self):
+        pf, gf = mh.atmosphere_scale_factors(1.0, "mass")
+        self.assertAlmostEqual(pf, 1.0, places=12)
+        self.assertAlmostEqual(gf, 1.0, places=12)
+        pf, gf = mh.atmosphere_scale_factors(0.1, "mass")
+        self.assertAlmostEqual(pf, 0.1 ** (2 - 4 * 0.282), places=6)
+        self.assertAlmostEqual(gf, 0.1 ** (1 - 2 * 0.282), places=6)
+        self.assertEqual(mh.atmosphere_scale_factors(0.1, "fixed")[0], 1.0)
+
     def test_earth_mass_keeps_45_min(self):
         g = mh.planet_bulk(1.0)["gravity"]
         self.assertLess(g, mh.G_EARTH)
@@ -843,8 +903,8 @@ class TestPlotVegByParams(unittest.TestCase):
                 },
             )
             groups = vegplot.discover(tmp)
-            self.assertEqual(len(groups[("mass_only", "n2", "earth", "T21")]), 2)
-            self.assertEqual(len(groups[("normal", "co2", "other", "T21")]), 1)
+            self.assertEqual(len(groups[("mass_only", "n2", "earth", "T21", "")]), 2)
+            self.assertEqual(len(groups[("normal", "co2", "other", "T21", "")]), 1)
 
     def test_writes_named_pngs(self):
         with tempfile.TemporaryDirectory() as tmp:

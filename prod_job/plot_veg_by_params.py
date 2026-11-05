@@ -28,6 +28,7 @@ from atmos_presets import (
     iter_sweep_json,
     resolve_atmos_type,
     resolve_physics_mode,
+    scenario_tag,
     sweep_json_name,
 )
 
@@ -67,20 +68,24 @@ def parse_args(argv=None):
 
 
 def regime_key(rec):
-    return (rec["run_mode"], rec["atmos"], rec["physics"], rec["resolution"])
+    scenario = scenario_tag(rec.get("pressure_scaling", "fixed"),
+                            rec.get("co2_scaling", "mixing_ratio"))
+    return (rec["run_mode"], rec["atmos"], rec["physics"], rec["resolution"], scenario)
 
 
-def regime_label(run_mode, atmos, physics, resolution="T21"):
+def regime_label(run_mode, atmos, physics, resolution="T21", scenario=""):
     mode = "mass_only" if run_mode == "mass_only" else "normal"
     bits = [mode, atmos, physics]
     if resolution and resolution != "T21":
         bits.append(resolution)
+    if scenario:
+        bits.append(scenario.lstrip("_").replace("_", " "))
     return " ".join(bits)
 
 
-def plot_basename(run_mode, atmos, physics, resolution="T21", scale=None):
+def plot_basename(run_mode, atmos, physics, resolution="T21", scale=None, scenario=""):
     mode = "massonly" if run_mode == "mass_only" else "normal"
-    name = f"gpp_{mode}_{atmos}_{physics}"
+    name = f"gpp_{mode}_{atmos}_{physics}{scenario}"
     if resolution and resolution != "T21":
         name += f"_{resolution}"
     if scale:
@@ -102,7 +107,7 @@ def filter_groups(groups, args):
     physics = resolve_physics_mode(args.physics) if args.physics else None
     selected = {}
     for key, records in groups.items():
-        run_mode, mix, phys, resolution = key
+        run_mode, mix, phys, resolution, _scenario = key
         if args.mode and run_mode != args.mode:
             continue
         if atmos and mix != atmos:
@@ -239,12 +244,13 @@ def plot_grid(data, masses, rows, norm, value_index, yscale="linear", sharey=Fal
 
 
 def plot_regime(masses, data, run_mode, atmos, physics, resolution, norm,
-                value_index, outdir):
+                value_index, outdir, scenario=""):
     rows = star_rows(data)
-    title = regime_label(run_mode, atmos, physics, resolution)
+    title = regime_label(run_mode, atmos, physics, resolution, scenario)
     written = []
     if run_mode == "mass_only":
-        path = os.path.join(outdir, plot_basename(run_mode, atmos, physics, resolution))
+        path = os.path.join(outdir, plot_basename(run_mode, atmos, physics, resolution,
+                                                  scenario=scenario))
         written.append(plot_grid(
             data, masses, rows, norm, value_index,
             yscale="linear", title=title, outfile=path, annotate=True,
@@ -257,7 +263,7 @@ def plot_regime(masses, data, run_mode, atmos, physics, resolution, norm,
         ("indep_linear", "linear", False),
     ):
         path = os.path.join(
-            outdir, plot_basename(run_mode, atmos, physics, resolution, scale),
+            outdir, plot_basename(run_mode, atmos, physics, resolution, scale, scenario),
         )
         written.append(plot_grid(
             data, masses, rows, norm, value_index,
@@ -323,11 +329,11 @@ def main(argv=None):
     earth_ref = args.earth_ref or os.path.join(directory, EARTH_REFERENCE_JSON)
     norm = load_earth_baseline(earth_ref, args.value_index)
 
-    for (run_mode, atmos, physics, resolution), records in sorted(groups.items()):
+    for (run_mode, atmos, physics, resolution, scenario), records in sorted(groups.items()):
         masses, data = load_regime(records)
         plot_regime(
             masses, data, run_mode, atmos, physics, resolution,
-            norm, args.value_index, outdir,
+            norm, args.value_index, outdir, scenario=scenario,
         )
     return 0
 

@@ -51,7 +51,7 @@ EARTHLIKE_GASES = {
     "pHe": 5.24e-6,
     "pN2": 0.78084,
     "pO2": 0.20946,
-    "pCO2": 330.0e-6,
+    "pCO2": 400.0e-6,
     "pAr": 9.34e-3,
     "pNe": 18.18e-6,
     "pKr": 1.14e-6,
@@ -144,6 +144,20 @@ ATMOS_TYPES = ("evolved", "n2", "co2")
 PRESET_ALIASES = {"earth": "n2", "venus": "co2"}
 PHYSICS_MODES = ("earth", "mars", "other")
 
+# How surface pressure and CO2 change with planet mass (RUN_CONFIGS keys
+# pressure_scaling / co2_scaling). See ATMOSPHERES.md "Surface pressure".
+#   fixed: every mass keeps the preset's partial pressures.
+#   mass:  atmospheric mass is a fixed fraction of planet mass (Kopparapu et
+#          al. 2014), so P scales as M^2 / R^4, normalized to 1 M_earth.
+PRESSURE_SCALINGS = ("fixed", "mass")
+#   mixing_ratio:     CO2 scales with the other gases (constant ppmv).
+#   partial_pressure: CO2 keeps the preset's partial pressure.
+#   surface_area:     CO2 mass scales with R^2, so pCO2 scales with g.
+CO2_SCALINGS = ("mixing_ratio", "partial_pressure", "surface_area")
+_PRESSURE_TOKENS = {"fixed": "pfix", "mass": "pmass"}
+_CO2_TOKENS = {"mixing_ratio": "co2mix", "partial_pressure": "co2pp", "surface_area": "co2area"}
+DEFAULT_SCENARIO = ("fixed", "mixing_ratio")
+
 
 def resolve_atmos_type(atmos_type):
     """Map aliases (earth, venus) onto canonical PRESETS keys."""
@@ -152,6 +166,36 @@ def resolve_atmos_type(atmos_type):
         known = list(PRESETS) + list(PRESET_ALIASES)
         raise ValueError(f"Unknown atmos_type {atmos_type!r}; expected one of {known}")
     return key
+
+
+def resolve_pressure_scaling(name):
+    if name not in PRESSURE_SCALINGS:
+        raise ValueError(f"Unknown pressure_scaling {name!r}; expected one of {PRESSURE_SCALINGS}")
+    return name
+
+
+def resolve_co2_scaling(name):
+    if name not in CO2_SCALINGS:
+        raise ValueError(f"Unknown co2_scaling {name!r}; expected one of {CO2_SCALINGS}")
+    return name
+
+
+def scale_partial_pressures(params, pressure_factor, gravity_factor, co2_scaling="mixing_ratio"):
+    """Scale every partial pressure by pressure_factor, then set pCO2 per co2_scaling.
+
+    gravity_factor is g / g(1 M_earth); surface_area scaling uses it because
+    p = M_CO2 g / (4 pi R^2) and M_CO2 is proportional to R^2.
+    """
+    co2_scaling = resolve_co2_scaling(co2_scaling)
+    p_co2 = float(params.get("pCO2", 0.0) or 0.0)
+    for key in GAS_KEYS:
+        if key in params:
+            params[key] = float(params[key] or 0.0) * pressure_factor
+    if co2_scaling == "partial_pressure":
+        params["pCO2"] = p_co2
+    elif co2_scaling == "surface_area":
+        params["pCO2"] = p_co2 * gravity_factor
+    return params
 
 
 def resolve_physics_mode(physics_mode):
@@ -205,7 +249,8 @@ def resolve_run_config(raw, default_run_mode="normal"):
     """Fill physics, ozone, and Earth-day extras for one sweep.
 
     `raw` is an atmos name or a dict with at least `atmos_type`. Optional keys:
-    `run_mode`, `physics_mode`, `atmos_params`, `ozone`, plus
+    `run_mode`, `physics_mode`, `atmos_params`, `ozone`, `pressure_scaling`,
+    `co2_scaling`, plus
     CONFIGURE_OPTIONAL_KEYS, or `extras` for any other configure() kwargs.
     """
     if isinstance(raw, str):
@@ -231,6 +276,8 @@ def resolve_run_config(raw, default_run_mode="normal"):
         "atmos_params": raw.get("atmos_params"),
         "run_mode": raw.get("run_mode", default_run_mode),
         "ozone": bool(ozone),
+        "pressure_scaling": resolve_pressure_scaling(raw.get("pressure_scaling", "fixed")),
+        "co2_scaling": resolve_co2_scaling(raw.get("co2_scaling", "mixing_ratio")),
         "extras": extras,
     }
 
@@ -263,11 +310,14 @@ def total_pressure_bar(params):
 
 
 # exo.Earthlike pins the top at 50 mbar for a ~1000 mbar surface (5%).
+# exo.Model, which we use, defaults to vtype=0: sigma levels whose top
+# interface is ~7.7% of the surface pressure at any pressure.
 EARTH_SURFACE_MBAR = 1000.0
 EARTH_MODELTOP_MBAR = 50.0
-# Near 1 bar, leave Model defaults (vtype=0, no pinned top) so n2/co2/mars
-# 1-bar runs do not change.
-COLUMN_NEAR_EARTH_BAR = (0.5, 2.0)
+# Between these, keep Model defaults (vtype=0, no pinned top). The low end is
+# 0.1 bar so mass-scaled Earth air (0.14 bar at 0.1 M_earth) keeps the same
+# grid as 1 bar.
+COLUMN_NEAR_EARTH_BAR = (0.1, 2.0)
 # ExoPlaSim guidance: P < 0.1 bar or P > 10 bar often needs ~5 min steps.
 TIMESTEP_P_THIN_BAR = 0.1
 TIMESTEP_P_THICK_BAR = 10.0
@@ -301,11 +351,11 @@ THICK_COLUMN_NAMELIST = {
 def column_setup(p_surf_bar, p_h2o_bar=None):
     """Vertical grid and stability knobs for this surface pressure.
 
-    Empty if ~1 bar, so n2/co2/mars 1-bar runs keep Model defaults.
+    Empty between 0.1 and 2 bar, so those runs keep Model defaults.
 
-    Thin (Mars 6.36 mbar): PlaSim's usual ~50 mbar top is *below* the
-    surface. Pin the top to 5% of P (vtype=4) and turn off evaporation
-    if the mix has no water. Earth orography stays (see
+    Thin (Mars 6.36 mbar): pin the top to 5% of P (vtype=4; the default
+    grid would put it at ~7.7%) and turn off evaporation if the mix has no
+    water. Earth orography stays (see
     CONFIGURE_OPTIONAL_KEYS for why it cannot be flattened).
 
     Thick (Venus 92 bar): keep the lid near Earth's 50 mbar so the CO2
@@ -463,17 +513,27 @@ def apply_physics_mode(local_params, physics_mode):
     return {"mars": False}
 
 
-def regime_file_tag(run_mode, atmos_type, physics_mode):
-    """Filename tag so composition/physics combos do not overwrite each other.
+def scenario_tag(pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+    """`_pmass_co2pp` etc.; empty for the default fixed / mixing_ratio scenario."""
+    scenario = (resolve_pressure_scaling(pressure_scaling), resolve_co2_scaling(co2_scaling))
+    if scenario == DEFAULT_SCENARIO:
+        return ""
+    return f"_{_PRESSURE_TOKENS[scenario[0]]}_{_CO2_TOKENS[scenario[1]]}"
 
-    Always `_<mode>_<atmos>` or `_<mode>_<atmos>_<physics>` when physics is
-    not earth. `_massonly2` is a legacy alias the parser still accepts.
+
+def regime_file_tag(run_mode, atmos_type, physics_mode,
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+    """Filename tag so composition/physics/scaling combos do not overwrite each other.
+
+    `_<mode>_<atmos>`, plus `_<physics>` when physics is not earth, plus
+    scenario_tag() when the scaling is not fixed / mixing_ratio. `_massonly2`
+    is a legacy alias the parser still accepts.
     """
     atmos = resolve_atmos_type(atmos_type)
     physics = resolve_physics_mode(physics_mode)
     mode_tag = "_massonly" if run_mode == "mass_only" else "_normal"
     extra = f"_{atmos}" if physics == "earth" else f"_{atmos}_{physics}"
-    return mode_tag + extra
+    return mode_tag + extra + scenario_tag(pressure_scaling, co2_scaling)
 
 
 SWEEP_JSON_PREFIX = "16cpus_test_"
@@ -508,12 +568,19 @@ def _mass_from_unknown_token(token):
 
 
 def parse_regime_tag(tag):
-    """Split `_normal_n2` / `_massonly_co2_other` (and legacy `_massonly2`)."""
+    """Split `_normal_n2` / `_massonly_co2_other` / `_massonly_n2_pmass_co2pp` (and legacy `_massonly2`)."""
     if not tag:
         return None
     if tag in _LEGACY_TAGS:
         run_mode, atmos, physics = _LEGACY_TAGS[tag]
-        return {"run_mode": run_mode, "atmos": atmos, "physics": physics}
+        return {"run_mode": run_mode, "atmos": atmos, "physics": physics,
+                "pressure_scaling": DEFAULT_SCENARIO[0], "co2_scaling": DEFAULT_SCENARIO[1]}
+    pressure_scaling, co2_scaling = DEFAULT_SCENARIO
+    scen = re.search(r"_(pfix|pmass)_(co2mix|co2pp|co2area)$", tag)
+    if scen:
+        pressure_scaling = {v: k for k, v in _PRESSURE_TOKENS.items()}[scen.group(1)]
+        co2_scaling = {v: k for k, v in _CO2_TOKENS.items()}[scen.group(2)]
+        tag = tag[:scen.start()]
     if tag.startswith("_massonly"):
         run_mode = "mass_only"
         rest = tag[len("_massonly"):]
@@ -542,7 +609,8 @@ def parse_regime_tag(tag):
         atmos = resolve_atmos_type(atmos_body)
     except ValueError:
         return None
-    return {"run_mode": run_mode, "atmos": atmos, "physics": physics}
+    return {"run_mode": run_mode, "atmos": atmos, "physics": physics,
+            "pressure_scaling": pressure_scaling, "co2_scaling": co2_scaling}
 
 
 def resolution_suffix(resolution):

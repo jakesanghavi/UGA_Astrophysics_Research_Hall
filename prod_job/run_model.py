@@ -14,6 +14,8 @@ RUN_MODE = "mass_only"
 # Sequence of atmosphere sweeps. Each entry is an atmos name or a dict:
 #   atmos_type (required)
 #   run_mode, physics_mode, atmos_params, ozone  (optional)
+#   pressure_scaling: "fixed" (default) or "mass" (P ~ M^2/R^4)
+#   co2_scaling: "mixing_ratio" (default), "partial_pressure", "surface_area"
 #   rotationperiod, synchronous, obliquity, extras, ...  (optional configure())
 # Omitted physics_mode / ozone: other + no ozone for CO2 mixes; earth + ozone
 # for n2 / evolved. Earth day (rotationperiod=1, synchronous=False) is always
@@ -23,8 +25,10 @@ RUN_MODE = "mass_only"
 #   RUN_CONFIGS = ["co2", "mars"]
 #   RUN_CONFIGS = [{"atmos_type": "n2", "run_mode": "mass_only"}]
 RUN_CONFIGS = [
-    {"atmos_type": "venus_surface"},
-    {"atmos_type": "mars_surface"},
+    {"atmos_type": "n2"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "mixing_ratio"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "partial_pressure"},
+    {"atmos_type": "n2", "pressure_scaling": "mass", "co2_scaling": "surface_area"},
 ]
 
 # Fixed star/orbit used for the Earth reference and for "mass_only" runs.
@@ -53,9 +57,13 @@ def run_one_config(config):
     atmos_type = config["atmos_type"]
     physics_mode = config["physics_mode"]
     run_mode = config["run_mode"]
-    file_tag = regime_file_tag(run_mode, atmos_type, physics_mode)
+    pressure_scaling = config["pressure_scaling"]
+    co2_scaling = config["co2_scaling"]
+    file_tag = regime_file_tag(run_mode, atmos_type, physics_mode,
+                               pressure_scaling, co2_scaling)
     print(f"ATMOS_TYPE={atmos_type}  PHYSICS_MODE={physics_mode}  "
           f"ATMOS_PARAMS={config['atmos_params']}  ozone={config['ozone']}  "
+          f"pressure_scaling={pressure_scaling}  co2_scaling={co2_scaling}  "
           f"run_mode={run_mode}  file_tag={file_tag}")
 
     common = dict(
@@ -65,6 +73,8 @@ def run_one_config(config):
         physics_mode=physics_mode,
         atmos_params=config["atmos_params"],
         configure_kwargs=config["extras"],
+        pressure_scaling=pressure_scaling,
+        co2_scaling=co2_scaling,
     )
     masses = list(MASS_RATIOS)
 

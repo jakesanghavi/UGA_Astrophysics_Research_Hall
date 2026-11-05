@@ -20,7 +20,8 @@ Omitted `physics_mode` is `other` for CO2-dominated presets (`co2`, `mars`,
 (`rotationperiod=1`, `synchronous=False`) is always written unless the entry
 overrides it.
 
-Default `RUN_CONFIGS` is `venus_surface` then `mars_surface`.
+Default `RUN_CONFIGS` is four `n2` mass_only sweeps (fixed pressure, then
+mass-scaled pressure with each CO2 scaling).
 
 One `model_helpers.py` serves every mix. `model_helpers_n2.py` and
 `model_helpers_co2.py` are gone.
@@ -78,9 +79,8 @@ Venus vs Mars a composition comparison, not a 92 bar vs 6 mbar leap.
 `venus_surface` and `mars_surface` are opt-in; they are not production
 defaults and are not aliases of `venus` / `mars`.
 
-Default `RUN_CONFIGS` in `run_model.py`: `venus_surface` then `mars_surface`
-(each with `other` physics and ozone off). Earth reference is still `n2` +
-earth physics.
+`venus_surface` / `mars_surface` sweeps use `other` physics and ozone off.
+Earth reference is still `n2` + earth physics.
 
 ### Output file tags
 
@@ -88,17 +88,19 @@ So two regimes do not overwrite the same JSON:
 
 - `_normal_<atmos>` or `_massonly_<atmos>` when physics is earth
 - `_normal_<atmos>_<physics>` / `_massonly_<atmos>_<physics>` otherwise
+- plus `_pfix|_pmass` and `_co2mix|_co2pp|_co2area` unless the scaling is
+  fixed pressure with `mixing_ratio` CO2
 
 `plot_veg_by_params.py` still reads the old `_massonly2` / `_massonly`
 names as `n2` + earth. Non-T21 files get `_Txx` before `.json`.
 
 ## Surface pressure
 
-Surface pressure is the sum of the preset's partial pressures. ExoPlaSim
-writes that sum to `PSURF`. Gravity and radius do not enter it. Every
-planet mass gets the same pressure (1.01 bar for `n2` / `evolved`).
+Surface pressure is the sum of the partial pressures (bar). ExoPlaSim
+writes that sum to `PSURF`. With `pressure_scaling="fixed"` (default) every
+planet mass gets the preset's pressure (1.01 bar for `n2` / `evolved`).
 `PRESSURE_FRACTION` in `model_helpers.py` scales all partial pressures by
-one factor; it is 1 and not tied to mass.
+one global factor; it is 1.
 
 Fixed pressure means the amount of air changes with mass. Column mass is
 P/g; total atmosphere is P·4πR²/g.
@@ -110,9 +112,35 @@ P/g; total atmosphere is P·4πR²/g.
 | 1.0 | 9.62 | 1.0× | 1.04× | 1.04× |
 | 2.0 | 13.01 | 0.75× | 1.14× | 0.57× |
 
-The alternative convention, the same atmosphere mass fraction for every
-planet, gives P ∝ M²/R⁴ ≈ M^0.87 with the Noack radius (~0.13 bar at
-0.1 M⊕, ~1.8 bar at 2 M⊕). Not implemented.
+`pressure_scaling="mass"` keeps the atmosphere a fixed fraction of planet
+mass (Kopparapu et al. 2014 scale background N2 the same way). Then
+P = f·G·M²/(4πR⁴); `atmosphere_scale_factors` multiplies every partial
+pressure by M²·(R₁/R)⁴, normalized to the code's own 1 M⊕ planet (Noack
+radius 1.010 R⊕), so 1 M⊕ keeps the preset. With R ∝ M^0.282 this is
+P ≈ 1.01 bar × M^0.872.
+
+`co2_scaling` then sets CO2 on top of that (preset pCO2 = 400 µbar):
+
+| Mass (M⊕) | P (bar) | `mixing_ratio` pCO2 / ppmv | `partial_pressure` | `surface_area` |
+|---|---|---|---|---|
+| 0.1 | 0.136 | 54 µbar / 396 | 400 µbar / 2942 | 147 µbar / 1080 |
+| 0.25 | 0.302 | 119 / 396 | 400 / 1325 | 219 / 725 |
+| 0.5 | 0.552 | 219 / 396 | 400 / 725 | 296 / 536 |
+| 1.0 | 1.010 | 400 / 396 | 400 / 396 | 400 / 396 |
+| 2.0 | 1.849 | 732 / 396 | 400 / 216 | 541 / 293 |
+
+`surface_area` assumes CO2 mass ∝ R², so pCO2 = M_CO2·g/(4πR²) ∝ g
+(≈ M^0.436). These are alternative CO2 inventory assumptions, not
+predictions of a carbon-silicate cycle.
+
+SIMBA reads CO2 as a mixing ratio. The light-limited β uses plant ppmv
+(clamped at 1000, β capped at 1); the water-limited term goes as
+surface pressure × plant ppmv, i.e. CO2 partial pressure up to the clamp.
+`mixing_ratio` therefore leaves β unchanged across masses;
+`partial_pressure` hits the 1000 ppm clamp below ~0.35 M⊕.
+
+Mass-scaled Earth air stays above 0.1 bar down to 0.1 M⊕, so every mass
+uses the default vertical grid (`COLUMN_NEAR_EARTH_BAR = (0.1, 2.0)`).
 
 ## H/He envelope (`evolved`)
 
@@ -183,8 +211,8 @@ The patch splits the two:
   set explicitly in the namelist (`CO2VEG >= 0` overrides the clamp).
 
 1000 ppm is a plant-CO2 clamp for the water-limited term (`zgppw ∝ zco2p`).
-Harvey β is then capped at 1.0 (the 360 ppm reference). Earth at 330 ppm
-stays β ≈ 0.97. High-CO2 mixes cannot get a fertilization bonus above
+Harvey β is then capped at 1.0 (the 360 ppm reference). The Earth mix
+(400 µbar, 396 ppmv) has β = 1.03 before the cap, so 1.0. High-CO2 mixes cannot get a fertilization bonus above
 Earth; low CO2 can still drop β below 1 and to 0 near 13 ppm.
 
 Namelist (written after `configure`): `CO2VEG`, `CO2VEG_MAX`, `T_HOT`,
