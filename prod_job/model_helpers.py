@@ -91,7 +91,7 @@ F_INIT = 0.01
 # Composition mix. Routed from run_model.py (see ATMOSPHERES.md).
 #   evolved / n2 / co2 / mars, plus venus_surface and mars_surface.
 #   aliases: earth→n2, venus→co2. co2/mars are ~1 bar mixes, not 92 bar / 6 mbar.
-ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "evolved")
+ATMOS_TYPE = os.environ.get("EXOPLASIM_ATMOS", "n2")
 # PlaSim R and κ. earth / mars / other — see ATMOSPHERES.md.
 PHYSICS_MODE = os.environ.get("EXOPLASIM_PHYSICS", "earth")
 

@@ -687,10 +687,10 @@ class TestDiagnosticCli(unittest.TestCase):
     def test_default_grid_is_tiny(self):
         args = runner.parse_args([])
         tasks = runner.build_tasks(args)
-        # 3 atmos × 3 masses × 1 (M*, AU)
-        self.assertEqual(len(tasks), 9)
+        # 1 atmos × 3 masses × 1 (M*, AU)
+        self.assertEqual(len(tasks), 3)
         self.assertEqual(args.years, 1)
-        self.assertEqual({t[0] for t in tasks}, {"evolved", "n2", "co2"})
+        self.assertEqual({t[0] for t in tasks}, {"n2"})
 
     def test_aliases_and_mars_are_accepted(self):
         args = runner.parse_args(["--dry-run", "--atmos", "earth,venus,mars", "--masses", "1"])
@@ -797,7 +797,10 @@ class TestPlotter(unittest.TestCase):
             with open(json_path, "w") as handle:
                 json.dump({"axis": "mass", "records": records}, handle)
             plotter.main(["--input", json_path, "--outdir", outdir])
-            prepared = plotter.prepare_records(records)
+            self.assertNotIn("venus_surface", {
+                rec["atmos"] for rec in plotter.prepare_records(records)
+            })
+            prepared = plotter.prepare_records(records, attach_stubs=True)
             by_atmos = plotter.grouped(prepared)
             self.assertIn("venus_surface", by_atmos)
             self.assertIn("mars_surface", by_atmos)

@@ -30,7 +30,7 @@ Every run writes an Earth reference first: 1 M⊕ at 1 AU around 1 M⊙ with
 `n2` + earth physics → `earth_reference.json`.
 
 `EXOPLASIM_ATMOS` and `EXOPLASIM_PHYSICS` override the same defaults from
-the environment.
+the environment. Without them the fallback mix is `n2` with earth physics.
 
 ## Composition vs physics
 
@@ -267,14 +267,12 @@ It records land-mean β, f(T), fPAR, SW↓, GPP_light (`vegppl`), GPP_water
   is blank. `*` on the label.
 - `gpp_preset_knobs.png`: P, pCO2, air CO2, plant CO2, β, timestep P-factor,
   modeltop, mmw. Earth (`n2`) is a green X. `plot_gpp_diagnostics.py`
-  attaches Earth plus `venus_surface` / `mars_surface` stubs on the same
-  (mass, M*, AU) grid when those mixes are missing, so 1 bar / 92 bar /
-  6.36 mbar knobs plot without launching a GCM year. `--no-surface-stubs`
-  skips the two surface-P stubs; Earth is still attached.
+  attaches Earth on the same (mass, M*, AU) grid when it is missing.
+  `--surface-stubs` also attaches `venus_surface` / `mars_surface`
+  preset-only records, so 92 bar / 6.36 mbar knobs plot without a GCM year.
 
 `--preset-only` on `run_gpp_diagnostics.py` writes the same mix/column
-fields with no ExoPlaSim, then the PNGs. Default `--atmos` is still
-`evolved,n2,co2`.
+fields with no ExoPlaSim, then the PNGs. Default `--atmos` is `n2`.
 
 β in that output is the **plant** (clamped) value. `co2_ppmv` is the air
 mixing ratio; `co2veg_ppmv` is what SIMBA used.

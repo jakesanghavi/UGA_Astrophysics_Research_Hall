@@ -148,7 +148,8 @@ RUN_CONFIGS = [{"atmos_type": "evolved"}]
 ```
 
 `EXOPLASIM_ATMOS` and `EXOPLASIM_PHYSICS` set `model_helpers` defaults when
-the caller does not pass `atmos_type` / `physics_mode`. `run_model.py` always
+the caller does not pass `atmos_type` / `physics_mode` (default `n2` /
+`earth`). `run_model.py` always
 passes each config's mix, so those env vars do not change a `run_model.py`
 sweep.
 
@@ -214,8 +215,8 @@ python plot_gpp_diagnostics.py --input gpp_diag.json --outdir gpp_diag_plots
 
 Rate charts (`gpp_rates_by_atmos.png`, `gpp_rate_regime_bars.png`) omit
 crashed points. `gpp_water_dln_attribution.png` and `gpp_preset_knobs.png`
-include Earth (green X) and `venus_surface` / `mars_surface` even without
-a GCM year. `--no-surface-stubs` skips the two surface-P stubs.
+include Earth (green X) even without a GCM year. `--surface-stubs` (on
+`plot_gpp_diagnostics.py`) also adds `venus_surface` / `mars_surface`.
 
 ```bash
 python run_gpp_diagnostics.py --atmos venus_surface,mars_surface --masses 1 \

@@ -652,16 +652,16 @@ def parse_args(argv=None):
         help="write only gpp_regime_bars.png",
     )
     parser.add_argument(
-        "--no-surface-stubs",
+        "--surface-stubs",
         action="store_true",
-        help="do not attach venus_surface / mars_surface preset-only records",
+        help="also attach venus_surface / mars_surface preset-only records",
     )
     return parser.parse_args(argv)
 
 
-def prepare_records(records, attach_stubs=True):
+def prepare_records(records, attach_stubs=False):
     prepared = [backfill_preset_fields(dict(rec)) for rec in records]
-    # Always put Earth on the knobs comparison; surface-P stubs are optional.
+    # Always put Earth on the knobs comparison; surface-P stubs are opt-in.
     prepared = attach_surface_preset_records(prepared, atmos=("n2",))
     if attach_stubs:
         prepared = attach_surface_preset_records(prepared, atmos=SURFACE_STUB_ATMOS)
@@ -674,7 +674,7 @@ def main(argv=None):
     records = bundle["records"]
     if not records:
         raise SystemExit(f"no records in {args.input}")
-    records = prepare_records(records, attach_stubs=not args.no_surface_stubs)
+    records = prepare_records(records, attach_stubs=args.surface_stubs)
     axis = infer_axis(records, bundle.get("axis") or args.axis)
     os.makedirs(args.outdir, exist_ok=True)
     by_atmos = grouped(records)

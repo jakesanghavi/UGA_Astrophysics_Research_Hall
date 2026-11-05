@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small-grid SIMBA GPP-term diagnostic. Not a production sweep.
 
-Default: evolved/n2/co2 × 3 masses at 1 Msun / 1 AU, one year.
+Default: n2 (Earth air) × 3 masses at 1 Msun / 1 AU, one year.
 See ATMOSPHERES.md for presets (including venus_surface / mars_surface).
 """
 

@@ -139,8 +139,8 @@ PRESETS = {
     },
 }
 
-# GPP-diagnostic default grid: the original three knobs, not mars / surface-P.
-ATMOS_TYPES = ("evolved", "n2", "co2")
+# GPP-diagnostic default grid: Earth air only. Other mixes via --atmos.
+ATMOS_TYPES = ("n2",)
 PRESET_ALIASES = {"earth": "n2", "venus": "co2"}
 PHYSICS_MODES = ("earth", "mars", "other")
 
