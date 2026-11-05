@@ -17,6 +17,7 @@ from atmos_presets import (
     resolve_co2_scaling,
     resolve_pressure_scaling,
     scale_partial_pressures,
+    scenario_tag,
     resolve_atmos_type,
     resolve_physics_mode,
     snap_timestep_min,
@@ -218,6 +219,47 @@ def atmosphere_scale_factors(mass_ratio, pressure_scaling="fixed"):
         return 1.0, gravity_factor
     pressure_factor = mass_ratio ** 2 * (ref["radius"] / bulk["radius"]) ** 4
     return pressure_factor, gravity_factor
+
+
+def base_atmosphere(mass_ratio, atmos_type, atmos_params=None,
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+    """(params, preset): planet_params with the preset gases, PRESSURE_FRACTION
+    and the mass scaling applied. No H/He envelope.
+
+    Returns a fresh copy so concurrent grid points never clobber each other.
+    """
+    params = dict(planet_params)
+    preset = apply_atmos_preset(params, atmos_type, overrides=atmos_params)
+    if PRESSURE_FRACTION != 1:
+        for gas_key in GAS_KEYS:
+            if gas_key in params:
+                params[gas_key] *= PRESSURE_FRACTION
+    pressure_factor, gravity_factor = atmosphere_scale_factors(mass_ratio, pressure_scaling)
+    scale_partial_pressures(params, pressure_factor, gravity_factor,
+                            co2_scaling=resolve_co2_scaling(co2_scaling))
+    return params, preset
+
+
+def build_requirements(mass_ratio, resolution="T21", atmos_type=None, physics_mode=None,
+                       atmos_params=None, pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+    """(build_key, signature) calculate_veg will compile for this planet.
+
+    Lets run_model.py tell whether a sweep needs a compile before starting
+    concurrent workers. The H/He envelope is left out; it never moves the
+    surface pressure across a precision or layer threshold.
+    """
+    atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
+    physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
+    params, _ = base_atmosphere(mass_ratio, atmos_type, atmos_params,
+                                pressure_scaling, co2_scaling)
+    p_surf = total_pressure_bar(params)
+    key = build_key(resolution, model_layers(p_surf, default=NLAYERS), NCPUS)
+    signature = build_signature(
+        _sha256_file(_SIMBA_PATCH),
+        model_precision(p_surf, default=PRECISION),
+        physics_mode == "mars",
+    )
+    return key, signature
 
 
 def planet_timestep(gravity, attempt=0, p_surf_bar=1.0):
@@ -499,17 +541,9 @@ def calculate_veg(
     # Cap flux as it crashes model at low AU
     # flux = min(flux, 2000)
 
-    # Work on a per-call copy so concurrent grid points never clobber each
-    # other's configuration (and so results are identical to the sequential run).
-    local_params = dict(planet_params)
-    preset = apply_atmos_preset(local_params, atmos_type, overrides=atmos_params)
-    if PRESSURE_FRACTION != 1:
-        for gas_key in GAS_KEYS:
-            if gas_key in local_params:
-                local_params[gas_key] *= PRESSURE_FRACTION
-    pressure_factor, gravity_factor = atmosphere_scale_factors(mass_ratio, pressure_scaling)
-    scale_partial_pressures(local_params, pressure_factor, gravity_factor,
-                            co2_scaling=resolve_co2_scaling(co2_scaling))
+    local_params, preset = base_atmosphere(
+        mass_ratio, atmos_type, atmos_params, pressure_scaling, co2_scaling,
+    )
 
     local_params['gravity'] = g_new
     local_params['radius'] = r_new
@@ -796,11 +830,12 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         # previously crashed (vegetation stored as null).
         if existing is not None and existing[0] is not None:
             continue
-        # Unique workdir per task (and per planet mass, since run_model.py runs
-        # mass_only masses concurrently) so runs never share a directory.
+        # Unique workdir per task, planet mass and scaling scenario, since
+        # run_model.py runs mass_only masses concurrently.
         safe = f"{ms}_{au_key}".replace('.', 'p').replace('-', 'm')
         res_tag = "" if resolution == "T21" else f"{resolution}_"
-        workdir_suffix = (f"{res_tag}{atmos_type}_{physics_mode}_"
+        workdir_suffix = (f"{res_tag}{atmos_type}_{physics_mode}"
+                          f"{scenario_tag(pressure_scaling, co2_scaling)}_"
                           f"m{mass_file_token(mass_ratio)}_{safe}")
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 

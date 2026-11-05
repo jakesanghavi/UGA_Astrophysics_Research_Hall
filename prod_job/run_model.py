@@ -1,5 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from model_helpers import model_fun, WORKERS
+from model_helpers import model_fun, build_requirements, needs_recompile, WORKERS
 from atmos_presets import resolve_run_configs, regime_file_tag
 from time import time, strftime, gmtime
 
@@ -79,12 +79,18 @@ def run_one_config(config):
     masses = list(MASS_RATIOS)
 
     # mass_only has one grid point per mass, so model_fun's own pool never
-    # gets more than one task. Run masses concurrently instead; the first one
-    # runs alone so the PlaSim binary compiles once before workers start.
+    # gets more than one task. Run masses concurrently instead. If a mass
+    # needs a PlaSim compile, run one such mass alone first so workers never
+    # compile the same binary at once; the heaviest has the longest timestep,
+    # so it finishes soonest.
     if run_mode == "mass_only" and WORKERS > 1 and len(masses) > 1:
-        report_mass(*run_mass(masses[0], run_mode, common))
+        unbuilt = [m for m in masses if needs_recompile(*mass_build(m, common))]
+        if unbuilt:
+            first = max(unbuilt)
+            report_mass(*run_mass(first, run_mode, common))
+            masses.remove(first)
         with ProcessPoolExecutor(max_workers=WORKERS) as pool:
-            futures = {pool.submit(run_mass, m, run_mode, common): m for m in masses[1:]}
+            futures = {pool.submit(run_mass, m, run_mode, common): m for m in masses}
             for fut in as_completed(futures):
                 try:
                     report_mass(*fut.result())
@@ -94,6 +100,14 @@ def run_one_config(config):
 
     for m in masses:
         report_mass(*run_mass(m, run_mode, common))
+
+
+def mass_build(m, common):
+    return build_requirements(
+        m, resolution=common["resolution"], atmos_type=common["atmos_type"],
+        physics_mode=common["physics_mode"], atmos_params=common["atmos_params"],
+        pressure_scaling=common["pressure_scaling"], co2_scaling=common["co2_scaling"],
+    )
 
 
 def run_mass(m, run_mode, common):

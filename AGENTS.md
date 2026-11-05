@@ -135,8 +135,11 @@ The pipeline is sped up in two functionally-equivalent ways:
   runs launch with `mpiexec --bind-to none` so concurrent `mpiexec` invocations
   don't pin to the same cores (otherwise parallel is *slower*, not faster).
   `mass_only` has one grid point per mass, so `run_model.py` runs the masses
-  concurrently instead (first mass alone, so the binary compiles once).
-  Workdirs include the mass token so concurrent masses never share one.
+  concurrently instead. If any mass needs a PlaSim compile
+  (`model_helpers.build_requirements` vs the build stamps), the heaviest such
+  mass runs alone first so workers never compile at once; otherwise every
+  mass starts in parallel. Workdirs include the scaling scenario and mass
+  token so concurrent runs never share one.
 - Fewer subprocess/postprocess passes: all `N_YEARS` run in a single subprocess,
   and intermediate years skip pyburn postprocessing (only the final year, which
   is the only one inspected, is postprocessed).

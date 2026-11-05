@@ -662,6 +662,18 @@ class TestPlanetTimestepAndBuild(unittest.TestCase):
         low_g = mh.planet_bulk(0.1)["gravity"]
         self.assertEqual(mh.planet_timestep(low_g, attempt=2), mh.MIN_TIMESTEP_MIN)
 
+    def test_build_requirements_match_column_choices(self):
+        n2_fixed = mh.build_requirements(1.0, atmos_type="n2", physics_mode="earth")
+        n2_mass = mh.build_requirements(0.1, atmos_type="n2", physics_mode="earth",
+                                        pressure_scaling="mass")
+        self.assertEqual(n2_fixed, n2_mass)
+        self.assertIn("precision=4", n2_fixed[1])
+        mars = mh.build_requirements(1.0, atmos_type="mars_surface", physics_mode="other")
+        self.assertEqual(mars[0], n2_fixed[0])
+        self.assertIn("precision=8", mars[1])
+        venus = mh.build_requirements(1.0, atmos_type="venus_surface", physics_mode="other")
+        self.assertEqual(venus[0], mh.build_key("T21", ap.THICK_COLUMN_LAYERS, mh.NCPUS))
+
     def test_build_signature_tracks_precision_and_mars(self):
         key = mh.build_key("T21", 20, 4)
         self.assertEqual(key, "t21_l20_p4")
