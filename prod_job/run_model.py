@@ -60,11 +60,12 @@ def run_one_config(config):
     run_mode = config["run_mode"]
     pressure_scaling = config["pressure_scaling"]
     co2_scaling = config["co2_scaling"]
+    x_fe = config["x_fe"]
     file_tag = regime_file_tag(run_mode, atmos_type, physics_mode,
-                               pressure_scaling, co2_scaling)
+                               pressure_scaling, co2_scaling, x_fe)
     print(f"ATMOS_TYPE={atmos_type}  PHYSICS_MODE={physics_mode}  "
           f"ATMOS_PARAMS={config['atmos_params']}  ozone={config['ozone']}  "
-          f"pressure_scaling={pressure_scaling}  co2_scaling={co2_scaling}  "
+          f"pressure_scaling={pressure_scaling}  co2_scaling={co2_scaling}  x_fe={x_fe}  "
           f"run_mode={run_mode}  file_tag={file_tag}")
 
     common = dict(
@@ -76,6 +77,7 @@ def run_one_config(config):
         configure_kwargs=config["extras"],
         pressure_scaling=pressure_scaling,
         co2_scaling=co2_scaling,
+        x_fe=x_fe,
     )
     masses = list(MASS_RATIOS)
 
@@ -108,6 +110,7 @@ def mass_build(m, common):
         m, resolution=common["resolution"], atmos_type=common["atmos_type"],
         physics_mode=common["physics_mode"], atmos_params=common["atmos_params"],
         pressure_scaling=common["pressure_scaling"], co2_scaling=common["co2_scaling"],
+        x_fe=common["x_fe"],
     )
 
 

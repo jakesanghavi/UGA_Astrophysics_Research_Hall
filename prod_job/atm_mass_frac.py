@@ -26,7 +26,7 @@ year = 365.25 * 24 * 3600
 AU = 1.496e11
 L_sun = 3.828e26
 M_sun = 1.98847e30
-X_fe = 0.32
+X_fe = 0.35
 X_fe_m = 0.081
 
 def get_stellar_xuv_params(m_star):

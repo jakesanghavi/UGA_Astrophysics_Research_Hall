@@ -2,13 +2,13 @@
 
 Matches patched `plasim_patches/simba.f90` vegstep:
 
-    zco2p = min(air CO2 ppmv, 1000)     # plant CO2; radiation still uses air CO2
-    zbeta = min(1, max(0, 1 + 0.3 * ln(zco2p / 360)))   # 0 if zco2p ~ 0; cap 1.0
+    zco2p = min(air ppmv * P / 1.011, 1000)   # plant CO2 (CO2VEG); radiation uses air CO2
+    zbeta = max(0, 1 + 0.3 * ln(zco2p / 360))  # 0 if zco2p ~ 0; at most 1.31 via the clamp
     zft   = clip((T_sfc_C) / 5, 0, 1)           # thaw 0–5 C
             * clip((45 - T_sfc_C) / 10, 0, 1)   # if T > 35 C; 0 at 45 C
     zveg  = 1 - exp(-0.5 * LAI)
     zgppl = 3.4e-10 * zbeta * zft * zveg * SW_down
-    zgppw = co2conv * P * zveg * ET * (0.3 * zco2p) / VPD
+    zgppw = co2conv * P_earth * zveg * ET * (0.3 * zco2p) / VPD
     zgpp  = min(zgppl, zgppw)
 
 Fortran beta is max(0, 1 + BF ln(...)), not the docs' 1 + max(0, BF ln(...)).
@@ -47,27 +47,36 @@ CO2_SENS = 0.3          # Harvey 1989 beta factor
 T_CRIT_C = 5.0          # deg C, thaw ramp
 T_HOT_C = 35.0          # deg C, start of high-T decline
 T_KILL_C = 45.0         # deg C, GPP = 0
-CO2VEG_MAX = 1000.0     # ppmv plant-CO2 clamp
-BETA_MAX = 1.0          # Harvey β cap (Earth reference is 1 at 360 ppm)
+CO2VEG_MAX = 1000.0     # Earth-equivalent ppmv plant-CO2 clamp
+P_EARTH_BAR = 1.011     # PlaSim's Earth surface pressure (psurf_earth in simba.f90)
+BETA_MAX = None         # no β cap; the plant-CO2 clamp bounds β at 1.31
 TMELT = 273.15          # K
 K_VEG = 0.5             # Beer's-law extinction
 CO2_ZERO = 1.0e-8       # Fortran branch: no CO2 => zbeta = 0
 
 LIGHT_FACTORS = ("beta", "fT", "fPAR", "SWdn")
-# Prescribed 6.11 levers (from the run config) plus leftover in vegppw.
-WATER_PRESET_FACTORS = ("p_total_bar", "co2veg_ppmv")
+# Prescribed 6.11 lever (from the run config) plus leftover in vegppw. Plant
+# CO2 already carries surface pressure, so P is not a separate factor.
+WATER_PRESET_FACTORS = ("co2veg_ppmv",)
 WATER_CLIMATE_TERM = "gppw_climate"
 WATER_BUDGET_TERMS = WATER_PRESET_FACTORS + (WATER_CLIMATE_TERM,)
 RATE_FIELDS = ("gppl", "gppw", "gpp")
 
 
-def plant_co2_ppmv(co2_ppmv, co2veg_max=CO2VEG_MAX):
-    """CO2 seen by SIMBA photosynthesis: min(air mixing ratio, clamp)."""
-    return min(max(float(co2_ppmv), 0.0), float(co2veg_max))
+def plant_co2_ppmv(co2_ppmv, p_surf_bar=P_EARTH_BAR, co2veg_max=CO2VEG_MAX):
+    """CO2 seen by SIMBA photosynthesis, as an Earth-equivalent mixing ratio.
+
+    Leaves respond to CO2 partial pressure, but SIMBA's constants (360 ppm
+    reference, clamp) are fit at ~1 bar. Passing ppmv * P / P_earth gives
+    the mixing ratio Earth would need for the same partial pressure, then
+    clamps it.
+    """
+    equivalent = max(float(co2_ppmv), 0.0) * float(p_surf_bar) / P_EARTH_BAR
+    return min(equivalent, float(co2veg_max))
 
 
 def beta_co2(co2_ppmv, co2veg_max=CO2VEG_MAX, beta_max=BETA_MAX):
-    """Harvey β from plant CO2. Floor 0, cap beta_max (1.0)."""
+    """Harvey β from Earth-equivalent plant CO2. Floor 0; beta_max caps it if set."""
     co2 = plant_co2_ppmv(co2_ppmv, co2veg_max=co2veg_max)
     if co2 < CO2_ZERO:
         return 0.0
@@ -133,6 +142,20 @@ def land_mask_from_lsm(lsm):
 EARTH_RADIUS_M = 6.371e6
 SECONDS_PER_YEAR = 3.15576e7
 GPP_METRIC_INDEX = {"cells": 1, "per_area": 4, "planet_total": 5}
+
+
+def area_mean(field, lat, mask=None):
+    """cos(latitude)-weighted mean of a (lat, lon) or (time, lat, lon) field."""
+    field = np.asarray(field, dtype=float)
+    if field.ndim == 3:
+        field = field.mean(axis=0)
+    weights = np.broadcast_to(
+        np.cos(np.radians(np.asarray(lat, dtype=float)))[:, None], field.shape,
+    )
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+        field, weights = field[mask], weights[mask]
+    return float(np.sum(field * weights) / np.sum(weights))
 
 
 def land_gpp_summary(gpp, lsm, lat, radius_earth):
@@ -248,7 +271,7 @@ def fill_preset_fields(record, params):
         return record
     p_tot = total_pressure_bar(params)
     co2_ppmv = co2_ppmv_from_params(params)
-    co2veg = plant_co2_ppmv(co2_ppmv)
+    co2veg = plant_co2_ppmv(co2_ppmv, p_tot)
     record["p_total_bar"] = _finite(p_tot)
     record["pCO2_bar"] = _finite(params.get("pCO2"))
     record["pH2_bar"] = _finite(params.get("pH2"))
@@ -529,23 +552,22 @@ def summarize_from_fields(
 
 
 def water_budget_vs_reference(record, reference):
-    """Split Δln(GPP_water) into P, plant CO2, and leftover climate.
+    """Split Δln(GPP_water) into plant CO2 and leftover climate.
 
-    P and plant CO2 are exact from the config, including crashed / preset-only
-    records. The residual Δln(vegppw) − Δln(P) − Δln(co2veg) needs a finished
-    vegppw (ET, VPD, cover, averaging) and stays None without one.
+    Plant CO2 (Earth-equivalent ppmv, so it already carries P) is exact from
+    the config, including crashed / preset-only records. The residual
+    Δln(vegppw) − Δln(co2veg) needs a finished vegppw (ET, VPD, cover,
+    averaging) and stays None without one.
     """
     empty = {name: None for name in WATER_BUDGET_TERMS + ("gppw",)}
     if reference is None or reference.get("crashed"):
         return {"dln": empty, "dominant_water_term": None}
-    dln_p = dln(record.get("p_total_bar"), reference.get("p_total_bar"))
     dln_co2 = dln(record.get("co2veg_ppmv"), reference.get("co2veg_ppmv"))
     dln_gppw = dln(record.get("gppw"), reference.get("gppw"))
     residual = None
-    if dln_gppw is not None and dln_p is not None and dln_co2 is not None:
-        residual = dln_gppw - dln_p - dln_co2
+    if dln_gppw is not None and dln_co2 is not None:
+        residual = dln_gppw - dln_co2
     terms = {
-        "p_total_bar": dln_p,
         "co2veg_ppmv": dln_co2,
         WATER_CLIMATE_TERM: residual,
         "gppw": dln_gppw,
@@ -553,7 +575,6 @@ def water_budget_vs_reference(record, reference):
     return {
         "dln": terms,
         "dominant_water_term": dominant_term({
-            "p_total_bar": dln_p,
             "co2veg_ppmv": dln_co2,
             WATER_CLIMATE_TERM: residual,
         }),

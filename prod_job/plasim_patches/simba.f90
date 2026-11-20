@@ -72,6 +72,7 @@ real            :: rinisoil  = 0.0      ! initial value for dcsoil(:)
 real            :: riniveg   = 0.0      ! initial value for dcveg(:)
 real            :: co2veg    = -1.0     ! plant CO2 [ppmv]; <0 => min(co2, co2veg_max)
 real            :: co2veg_max= 1000.0   ! clamp for plant CO2 when co2veg < 0
+real, parameter :: psurf_earth = 101100. ! [Pa] PlaSim's Earth surface pressure
 real            :: t_hot     = 35.0     ! start of high-T decline [deg C]
 real            :: t_kill    = 45.0     ! GPP = 0 above this [deg C]
 
@@ -348,7 +349,6 @@ if (zco2p .lt. 1.0e-8) then
 else
   zbeta  = max(0.,1.+co2_sens*log((zco2p-co2_comp)/(co2_ref-co2_comp)))
 endif
-zbeta = min(1.0, zbeta)
   
 ! Following plasim arrays are used but not modified
 ! -------------------------------------------------
@@ -406,7 +406,11 @@ do jhor = 1 , NHOR
     if (zco2p .lt. 1.0e-8) then
       zgppw = 0.
     else
-      zgppw = co2conv * dp(jhor) * zveg * (-devap(jhor)) / zvpd * (0.3 * zco2p)
+      ! zco2p is the Earth-equivalent ppmv of the global-mean CO2 partial
+      ! pressure (set from Python as CO2VEG), so dp/psurf keeps only the local
+      ! (orography) pressure variation; it reduces to dp * ppmv at Earth.
+      zgppw = co2conv * dp(jhor) * (psurf_earth / psurf) * zveg * (-devap(jhor)) &
+            / zvpd * (0.3 * zco2p)
     endif
     zgppw = min(1.0,max(0.0,zgppw)) ! limit to range (0..1)
 

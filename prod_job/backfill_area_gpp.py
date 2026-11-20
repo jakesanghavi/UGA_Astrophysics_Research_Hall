@@ -87,6 +87,7 @@ def main(argv=None):
             return os.path.join(directory, WORKDIR_PREFIX + grid_workdir_suffix(
                 rec["mass_token"], ms, au, rec["atmos"], rec["physics"], rec["resolution"],
                 rec.get("pressure_scaling", "fixed"), rec.get("co2_scaling", "mixing_ratio"),
+                x_fe=rec.get("x_fe"),
             ))
         jobs.append((rec["path"], workdir_for, rec["mass"]))
 

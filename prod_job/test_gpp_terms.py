@@ -49,12 +49,14 @@ class TestBeta(unittest.TestCase):
         plant = gt.plant_co2_ppmv(ppmv)
         self.assertAlmostEqual(plant, gt.CO2VEG_MAX)
         beta = gt.beta_co2(ppmv)
-        self.assertEqual(beta, 1.0)
+        self.assertAlmostEqual(beta, gt.beta_co2(gt.CO2VEG_MAX))
 
-    def test_beta_cap_is_one_above_360_ppm(self):
+    def test_beta_is_bounded_by_the_plant_co2_clamp(self):
         self.assertEqual(gt.beta_co2(360.0), 1.0)
-        self.assertEqual(gt.beta_co2(1000.0), 1.0)
-        self.assertEqual(gt.beta_co2(1.0e6), 1.0)
+        top = 1.0 + gt.CO2_SENS * math.log(gt.CO2VEG_MAX / gt.CO2_REF)
+        self.assertAlmostEqual(gt.beta_co2(1000.0), top)
+        self.assertAlmostEqual(gt.beta_co2(1.0e6), top)
+        self.assertAlmostEqual(top, 1.3065, places=3)
 
     def test_earth_co2_is_below_the_clamp(self):
         ppmv = ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)
@@ -98,7 +100,9 @@ class TestSummarize(unittest.TestCase):
         fT = gt.f_temperature(ts)
         fPAR = gt.f_par(lai)
         sw = gt.sw_down(rss, ssru)
-        beta = gt.beta_co2(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+        beta = gt.beta_co2(gt.plant_co2_ppmv(
+            ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES),
+            ap.total_pressure_bar(ap.EARTHLIKE_GASES)))
         gppl = gt.gpp_light(beta, fT, fPAR, sw)
         gppw = np.maximum(gppl * 2.0, 1.0e-20)  # light-limited wherever cover/T allow
         gpp = np.minimum(gppl, gppw)
@@ -117,7 +121,8 @@ class TestSummarize(unittest.TestCase):
         self.assertAlmostEqual(rec["fT"], 2.0 / 3.0, places=12)
         self.assertGreater(rec["frac_light_limited"], 0.9)
         self.assertEqual(rec["atmos"], "n2")
-        self.assertAlmostEqual(rec["co2veg_ppmv"], rec["co2_ppmv"])
+        self.assertAlmostEqual(
+            rec["co2veg_ppmv"], gt.plant_co2_ppmv(rec["co2_ppmv"], rec["p_total_bar"]))
 
     def test_water_limitation_fraction(self):
         fields = self._toy_fields()
@@ -146,7 +151,7 @@ class TestSummarize(unittest.TestCase):
         self.assertIsNone(rec["gppw"])
         self.assertAlmostEqual(rec["p_total_bar"], ap.VENUS_SURFACE_BAR, places=6)
         self.assertAlmostEqual(rec["co2veg_ppmv"], gt.CO2VEG_MAX, places=6)
-        self.assertEqual(rec["beta"], 1.0)
+        self.assertAlmostEqual(rec["beta"], gt.beta_co2(gt.CO2VEG_MAX))
         self.assertEqual(rec["vtype"], 3)
         self.assertAlmostEqual(rec["modeltop"], 50.0, places=5)
         self.assertTrue(rec["drycore"])
@@ -161,7 +166,7 @@ class TestSummarize(unittest.TestCase):
         rec = gt.summarize_from_fields(**fields)
         self.assertGreater(rec["co2_ppmv"], 9.0e5)
         self.assertAlmostEqual(rec["co2veg_ppmv"], gt.CO2VEG_MAX)
-        self.assertEqual(rec["beta"], 1.0)
+        self.assertAlmostEqual(rec["beta"], gt.beta_co2(gt.CO2VEG_MAX))
 
 
 class TestAttribution(unittest.TestCase):
@@ -190,80 +195,57 @@ class TestAttribution(unittest.TestCase):
         self.assertLess(attr["dln"]["beta"], math.log(2.0))
         self.assertIsNone(attr["dominant_water_term"])
 
-    def test_water_budget_splits_p_and_plant_co2(self):
-        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
-        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
-        vs_p = ap.total_pressure_bar(ap.VENUS_SURFACE_GASES)
-        vs_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.VENUS_SURFACE_GASES))
-        climate = 2.0
-        ref = {
-            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
-        }
-        rec = {
-            "p_total_bar": vs_p,
-            "co2veg_ppmv": vs_co2,
-            "gppw": (vs_p / n2_p) * (vs_co2 / n2_co2) * climate,
-            "crashed": False,
-        }
-        budget = gt.water_budget_vs_reference(rec, ref)
-        self.assertAlmostEqual(budget["dln"]["p_total_bar"], math.log(vs_p / n2_p), places=12)
+    def test_plant_co2_follows_partial_pressure(self):
+        earth_ppmv = ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES)
+        self.assertAlmostEqual(gt.plant_co2_ppmv(400.0, gt.P_EARTH_BAR), 400.0)
+        # Same 400 ubar of CO2 in 2 bar of air: 200 ppmv, but plants see 400.
+        self.assertAlmostEqual(gt.plant_co2_ppmv(200.0, 2 * gt.P_EARTH_BAR), 400.0)
+        # Same mixing ratio in thinner air: less CO2 for plants.
         self.assertAlmostEqual(
-            budget["dln"]["co2veg_ppmv"], math.log(vs_co2 / n2_co2), places=12,
-        )
-        self.assertAlmostEqual(budget["dln"]["gppw_climate"], math.log(climate), places=12)
-        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
+            gt.plant_co2_ppmv(earth_ppmv, 0.1 * gt.P_EARTH_BAR), 0.1 * earth_ppmv)
+        self.assertEqual(gt.plant_co2_ppmv(800.0, 2 * gt.P_EARTH_BAR), gt.CO2VEG_MAX)
 
-    def test_water_budget_plant_co2_when_p_fixed(self):
-        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
-        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
-        co2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.VENUSLIKE_GASES))
-        ref = {
-            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
-        }
-        rec = {
-            "p_total_bar": n2_p,
-            "co2veg_ppmv": co2_co2,
-            "gppw": co2_co2 / n2_co2,
-            "crashed": False,
-        }
+    def test_water_budget_plant_co2_and_climate(self):
+        n2_co2 = gt.plant_co2_ppmv(
+            ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES),
+            ap.total_pressure_bar(ap.EARTHLIKE_GASES))
+        vs_co2 = gt.plant_co2_ppmv(
+            ap.co2_ppmv_from_params(ap.VENUS_SURFACE_GASES),
+            ap.total_pressure_bar(ap.VENUS_SURFACE_GASES))
+        climate = 1.5
+        ref = {"co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False}
+        rec = {"co2veg_ppmv": vs_co2, "gppw": (vs_co2 / n2_co2) * climate, "crashed": False}
         budget = gt.water_budget_vs_reference(rec, ref)
-        self.assertEqual(budget["dln"]["p_total_bar"], 0.0)
-        self.assertAlmostEqual(budget["dln"]["gppw_climate"], 0.0, places=12)
+        self.assertNotIn("p_total_bar", budget["dln"])
+        self.assertAlmostEqual(
+            budget["dln"]["co2veg_ppmv"], math.log(vs_co2 / n2_co2), places=12)
+        self.assertAlmostEqual(budget["dln"]["gppw_climate"], math.log(climate), places=12)
         self.assertEqual(budget["dominant_water_term"], "co2veg_ppmv")
 
-    def test_water_budget_crashed_still_splits_p(self):
-        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
-        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+    def test_water_budget_crashed_still_has_plant_co2(self):
+        n2_co2 = gt.plant_co2_ppmv(
+            ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES),
+            ap.total_pressure_bar(ap.EARTHLIKE_GASES))
+        ref = {"co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False}
         vs = gt.preset_only_record(
             mass_ratio=1.0, mstar=1.0, au=1.0,
             atmos_type="venus_surface", physics_mode="other",
         )
-        ref = {
-            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
-        }
         budget = gt.water_budget_vs_reference(vs, ref)
         self.assertTrue(vs["crashed"])
-        self.assertIsNone(vs["gppw"])
+        self.assertAlmostEqual(vs["co2veg_ppmv"], gt.CO2VEG_MAX)
         self.assertAlmostEqual(
-            budget["dln"]["p_total_bar"], math.log(ap.VENUS_SURFACE_BAR / n2_p),
-            places=6,
-        )
+            budget["dln"]["co2veg_ppmv"], math.log(gt.CO2VEG_MAX / n2_co2), places=6)
         self.assertIsNone(budget["dln"]["gppw_climate"])
-        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
 
-    def test_mars_surface_water_budget_is_thin_p(self):
-        n2_p = ap.total_pressure_bar(ap.EARTHLIKE_GASES)
-        n2_co2 = gt.plant_co2_ppmv(ap.co2_ppmv_from_params(ap.EARTHLIKE_GASES))
+    def test_mars_surface_plant_co2_hits_clamp(self):
+        # ~6 mbar of CO2 is ~15x Earth's partial pressure despite the thin air.
         ms = gt.preset_only_record(
             mass_ratio=1.0, mstar=1.0, au=1.0,
             atmos_type="mars_surface", physics_mode="other",
         )
-        ref = {
-            "p_total_bar": n2_p, "co2veg_ppmv": n2_co2, "gppw": 1.0, "crashed": False,
-        }
-        budget = gt.water_budget_vs_reference(ms, ref)
-        self.assertLess(budget["dln"]["p_total_bar"], 0.0)
-        self.assertEqual(budget["dominant_water_term"], "p_total_bar")
+        self.assertGreater(ms["pCO2_bar"], 10 * ap.EARTHLIKE_GASES["pCO2"])
+        self.assertAlmostEqual(ms["co2veg_ppmv"], gt.CO2VEG_MAX)
         self.assertEqual(ms["vtype"], 4)
 
     def test_attach_surface_stubs_on_existing_grid(self):
@@ -557,7 +539,26 @@ class TestAtmosphereScaling(unittest.TestCase):
         p = 1.01 * 0.1 ** (2 - 4 * 0.282)
         self.assertGreater(p, 0.1)
         self.assertEqual(ap.column_setup(p, p_h2o_bar=0.01 * p), {})
-        self.assertEqual(ap.timestep_pressure_factor(p), 1.0)
+        # Thin air shortens the step, but 0.1 M_earth is already g-limited.
+        self.assertLess(ap.timestep_pressure_factor(p), 1.0)
+        if mh is not None:
+            g = mh.planet_bulk(0.1)["gravity"]
+            self.assertEqual(mh.planet_timestep(g, p_surf_bar=p), mh.planet_timestep(g))
+
+    def test_thin_air_at_earth_gravity_gets_30_min(self):
+        self.assertAlmostEqual(ap.timestep_pressure_factor(0.25), 0.5 ** 0.5)
+        self.assertEqual(ap.timestep_pressure_factor(0.5), 1.0)
+        if mh is not None:
+            g = mh.planet_bulk(1.0)["gravity"]
+            self.assertEqual(mh.planet_timestep(g, p_surf_bar=0.25), 30.0)
+
+
+    def test_dense_air_steps(self):
+        self.assertEqual(ap.timestep_pressure_factor(3.0), 1.0)
+        if mh is not None:
+            g = mh.planet_bulk(1.0)["gravity"]
+            steps = [mh.planet_timestep(g, p_surf_bar=p) for p in (3, 5, 7, 9)]
+            self.assertEqual(steps, [45.0, 15.0, 5.0, 5.0])
 
 
 class TestColumnSetup(unittest.TestCase):
@@ -692,6 +693,48 @@ class TestDiagnosticCli(unittest.TestCase):
         self.assertEqual(args.years, 1)
         self.assertEqual({t[0] for t in tasks}, {"n2"})
 
+    def test_pressure_axis_holds_mass_and_scales_all_gases(self):
+        args = runner.parse_args([
+            "--axis", "pressure", "--atmos", "n2", "--masses", "1,2", "--pressures", "0.5,3",
+        ])
+        tasks = runner.build_tasks(args)
+        self.assertEqual([(t[1], t[5]) for t in tasks], [(1.0, 0.5), (1.0, 3.0)])
+        base = ap.PRESETS["n2"]["gases"]
+        overrides = runner.pressure_overrides("n2", 3.0)
+        self.assertAlmostEqual(ap.total_pressure_bar(overrides), 3.0)
+        self.assertAlmostEqual(
+            ap.co2_ppmv_from_params(overrides), ap.co2_ppmv_from_params(dict(base)))
+
+    def test_time_limit_defaults_to_20_minutes(self):
+        self.assertEqual(runner.parse_args([]).max_minutes, 20.0)
+        self.assertEqual(runner.parse_args(["--max-minutes", "0"]).max_minutes, 0.0)
+
+    def test_pressure_points_get_their_own_key_and_workdir(self):
+        keys = {runner.record_key("n2", 1.0, 1.0, 1.0, "earth", p) for p in (None, 0.5, 3.0)}
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(runner.record_key("n2", 1.0, 1.0, 1.0), "n2|1.0|1.0|1.0|earth")
+        dirs = {runner.workdir_suffix("n2", 1.0, 1.0, 1.0, "earth", p) for p in (None, 0.5, 3.0)}
+        self.assertEqual(len(dirs), 3)
+
+    def test_pressure_plots_skip_crashes_and_use_1_bar_reference(self):
+        import plot_pressure_sweep as pplot
+        records = [
+            {"p_target_bar": p, "crashed": crashed, "area_gpp": g,
+             "ts_global_C": 15.0, "ts_land_area_C": 8.0}
+            for p, crashed, g in ((3.0, False, 1.0), (0.5, False, 3.0),
+                                  (1.0, False, 2.0), (5.0, True, None))
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sweep.json")
+            with open(path, "w") as handle:
+                json.dump({"records": records}, handle)
+            loaded = pplot.load_pressure_records(path)
+            self.assertEqual([rec["p_target_bar"] for rec in loaded], [0.5, 1.0, 3.0])
+            self.assertEqual(pplot.reference_record(loaded)["area_gpp"], 2.0)
+            self.assertEqual(pplot.main([path]), 0)
+            for name in ("sweep_gpp.png", "sweep_temp.png"):
+                self.assertTrue(os.path.isfile(os.path.join(tmp, name)))
+
     def test_aliases_and_mars_are_accepted(self):
         args = runner.parse_args(["--dry-run", "--atmos", "earth,venus,mars", "--masses", "1"])
         self.assertEqual(args.atmos, ["n2", "co2", "mars"])
@@ -736,10 +779,15 @@ class TestDiagnosticCli(unittest.TestCase):
         self.assertEqual(by_atmos["co2"], "other")
         self.assertEqual(by_atmos["mars"], "other")
 
-    def test_default_physics_is_earth(self):
-        args = runner.parse_args(["--dry-run", "--atmos", "co2", "--masses", "1"])
-        tasks = runner.build_tasks(args)
-        self.assertEqual(tasks[0][4], "earth")
+    def test_default_physics_follows_the_mix(self):
+        args = runner.parse_args(["--dry-run", "--atmos", "n2,mars", "--masses", "1"])
+        physics = {t[0]: t[4] for t in runner.build_tasks(args)}
+        self.assertEqual(physics, {"n2": "earth", "mars": "other"})
+
+    def test_dry_mix_keeps_water_cycle_below_10_bar(self):
+        for p in (0.5, 3.0, 9.0):
+            self.assertNotIn("drycore", ap.column_setup(p, p_h2o_bar=0.0))
+        self.assertTrue(ap.column_setup(20.0, p_h2o_bar=0.0)["drycore"])
 
     def test_dry_run_does_not_import_exoplasim(self):
         args = runner.parse_args(["--dry-run", "--atmos", "n2", "--masses", "1"])
@@ -861,6 +909,13 @@ class TestLandGppSummary(unittest.TestCase):
         big = gt.land_gpp_summary(gpp, lsm, self.lat, 1.0)
         self.assertAlmostEqual(small[2], big[2])
         self.assertAlmostEqual(big[3] / small[3], 4.0)
+
+    def test_area_mean_weights_by_latitude_and_mask(self):
+        field = np.array([[1.0], [0.0], [1.0]])
+        self.assertAlmostEqual(gt.area_mean(field, self.lat), 0.5)
+        mask = np.array([[True], [True], [False]])
+        self.assertAlmostEqual(gt.area_mean(field, self.lat, mask), 1 / 3)
+        self.assertAlmostEqual(gt.area_mean(np.stack([field, field]), self.lat), 0.5)
 
     def test_metric_indices_match_entry_layout(self):
         entry = ["avg", "tot", "startemp", "flux", "area", "total"]
@@ -1103,6 +1158,37 @@ class TestSimbaPatch(unittest.TestCase):
             text = handle.read()
         for token in ("co2veg", "co2veg_max", "t_hot", "t_kill", "zco2p"):
             self.assertIn(token, text)
+
+
+class TestIronContent(unittest.TestCase):
+    def test_default_is_earth_like_and_untagged(self):
+        self.assertEqual(ap.resolve_x_fe(None), ap.X_FE_EARTH)
+        self.assertEqual(ap.iron_tag(None), "")
+        self.assertEqual(ap.iron_tag(0.25), "_xfe025")
+        with self.assertRaises(ValueError):
+            ap.resolve_x_fe(0.9)
+
+    def test_iron_tag_round_trips_through_file_names(self):
+        tag = ap.regime_file_tag("mass_only", "n2", "earth", "mass", "mixing_ratio", 0.25)
+        self.assertEqual(tag, "_massonly_n2_pmass_co2mix_xfe025")
+        parsed = ap.parse_sweep_json_name(ap.sweep_json_name(1.0, file_tag=tag))
+        self.assertAlmostEqual(parsed["x_fe"], 0.25)
+        self.assertEqual(parsed["pressure_scaling"], "mass")
+        plain = ap.parse_sweep_json_name(ap.sweep_json_name(
+            1.0, run_mode="mass_only", atmos_type="n2", physics_mode="earth"))
+        self.assertEqual(plain["x_fe"], ap.X_FE_EARTH)
+        self.assertIn("_xfe045_", ap.grid_workdir_suffix(1.0, "1.0", "1.0", "n2", "earth", x_fe=0.45))
+
+    @unittest.skipIf(mh is None, "model_helpers needs exoplasim")
+    def test_iron_rich_planet_is_smaller_with_less_mass_scaled_air(self):
+        earth = mh.planet_bulk(1.0)
+        rich = mh.planet_bulk(1.0, 0.45)
+        self.assertLess(rich["radius"], earth["radius"])
+        self.assertGreater(rich["gravity"], earth["gravity"])
+        self.assertEqual(mh.atmosphere_scale_factors(1.0, "mass")[0], 1.0)
+        # Mantle loss outweighs the smaller radius: less pressure.
+        self.assertLess(mh.atmosphere_scale_factors(1.0, "mass", 0.45)[0], 1.0)
+        self.assertEqual(mh.atmosphere_scale_factors(1.0, "fixed", 0.45)[0], 1.0)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from atmos_presets import (
     iter_sweep_json,
     resolve_atmos_type,
     resolve_physics_mode,
+    iron_tag,
     scenario_tag,
     sweep_json_name,
 )
@@ -96,7 +97,7 @@ def parse_args(argv=None):
 
 def regime_key(rec):
     scenario = scenario_tag(rec.get("pressure_scaling", "fixed"),
-                            rec.get("co2_scaling", "mixing_ratio"))
+                            rec.get("co2_scaling", "mixing_ratio")) + iron_tag(rec.get("x_fe"))
     return (rec["run_mode"], rec["atmos"], rec["physics"], rec["resolution"], scenario)
 
 

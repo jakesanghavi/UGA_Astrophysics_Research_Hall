@@ -12,6 +12,8 @@ from atmos_presets import (
     co2_ppmv_from_params,
     default_ozone,
     grid_workdir_suffix,
+    resolve_x_fe,
+    X_FE_EARTH,
     mass_file_token,
     model_layers,
     model_precision,
@@ -29,12 +31,15 @@ from atmos_presets import (
 )
 from gpp_terms import (
     CO2VEG_MAX, T_HOT_C, T_KILL_C, plant_co2_ppmv, base_record, land_gpp_summary,
+    area_mean,
 )
 import sys
 import json
 import hashlib
 import shutil
 import os
+import signal
+import time
 import subprocess
 import base64
 import pickle
@@ -43,8 +48,15 @@ from scipy.interpolate import interp1d
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 ### PLANET CONFIGURATION ###
-N_YEARS = 3
-X_fe = 0.32
+# Read from the environment so spawned worker processes see the caller's value.
+N_YEARS = int(os.environ.get("EXOPLASIM_N_YEARS", "3"))
+# Wall-clock budget [min] for one grid point, across all retries. 0 = none.
+# When it runs out the ExoPlaSim process group is killed and the point is
+# recorded as crashed (timed_out on diagnostic records) without retrying:
+# a retry would use a smaller timestep and take longer still.
+RUN_TIME_LIMIT_MIN = float(os.environ.get("EXOPLASIM_RUN_TIME_LIMIT_MIN", "0"))
+TIMED_OUT = "timed_out"
+X_fe = X_FE_EARTH
 X_fe_m=0.081
 RESOLUTION = 'T21'
 # For some reason N=6 crashes everything
@@ -197,35 +209,39 @@ def piecewise_radius_estimate(mass_ratio):
     # This gas is semi-degenerate, leading to the constant relation
     return 18.6 * (mass_ratio ** (-0.06))
 
-def radius_noack(m_p):
-    return 1000*((7030 - 1840 * X_fe)*(m_p)**0.282)/rearth
+def radius_noack(m_p, x_fe=None):
+    """Noack & Lasbleis (2020) Eq. 5 radius [R_earth]; x_fe is bulk iron fraction."""
+    return 1000*((7030 - 1840 * resolve_x_fe(x_fe))*(m_p)**0.282)/rearth
 
 
-def planet_bulk(mass_ratio):
+def planet_bulk(mass_ratio, x_fe=None):
     """Gravity and radius for one planet mass (Noack mass-radius)."""
-    radius = radius_noack(mass_ratio)
+    radius = radius_noack(mass_ratio, x_fe)
     gravity = G_EARTH * mass_ratio / (radius ** 2)
     return {"radius": radius, "gravity": gravity}
 
 
-def atmosphere_scale_factors(mass_ratio, pressure_scaling="fixed"):
-    """(pressure_factor, gravity_factor) relative to the 1 M_earth planet.
+def atmosphere_scale_factors(mass_ratio, pressure_scaling="fixed", x_fe=None):
+    """(pressure_factor, gravity_factor) relative to the Earth-like 1 M_earth planet.
 
-    mass scaling keeps M_atm / M_p fixed, so P = M_atm g / (4 pi R^2) goes as
-    M^2 / R^4. Normalizing to the code's own 1 M_earth planet (R = 1.01,
-    g = 9.62 with the Noack radius) keeps 1 M_earth at the preset pressure.
+    mass scaling ties the atmosphere to the rocky mantle,
+    M_atm ∝ M_p (1 - CMF) (Steinmeyer et al. 2026), so
+    P = M_atm g / (4 pi R^2) goes as M^2 (1 - CMF) / R^4. Normalizing to the
+    Earth-like 1 M_earth planet (R = 1.001, g = 9.78) keeps it at the preset
+    pressure. With Earth-like iron this is the M^2 / R^4 scaling.
     """
-    bulk = planet_bulk(mass_ratio)
-    ref = planet_bulk(1.0)
+    bulk = planet_bulk(mass_ratio, x_fe)
+    ref = planet_bulk(1.0, X_FE_EARTH)
     gravity_factor = bulk["gravity"] / ref["gravity"]
     if resolve_pressure_scaling(pressure_scaling) == "fixed":
         return 1.0, gravity_factor
-    pressure_factor = mass_ratio ** 2 * (ref["radius"] / bulk["radius"]) ** 4
+    mantle = (1.0 - cmf_noack(x_fe)) / (1.0 - cmf_noack(X_FE_EARTH))
+    pressure_factor = mass_ratio ** 2 * (ref["radius"] / bulk["radius"]) ** 4 * mantle
     return pressure_factor, gravity_factor
 
 
 def base_atmosphere(mass_ratio, atmos_type, atmos_params=None,
-                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio", x_fe=None):
     """(params, preset): planet_params with the preset gases, PRESSURE_FRACTION
     and the mass scaling applied. No H/He envelope.
 
@@ -237,14 +253,16 @@ def base_atmosphere(mass_ratio, atmos_type, atmos_params=None,
         for gas_key in GAS_KEYS:
             if gas_key in params:
                 params[gas_key] *= PRESSURE_FRACTION
-    pressure_factor, gravity_factor = atmosphere_scale_factors(mass_ratio, pressure_scaling)
+    pressure_factor, gravity_factor = atmosphere_scale_factors(
+        mass_ratio, pressure_scaling, x_fe)
     scale_partial_pressures(params, pressure_factor, gravity_factor,
                             co2_scaling=resolve_co2_scaling(co2_scaling))
     return params, preset
 
 
 def build_requirements(mass_ratio, resolution="T21", atmos_type=None, physics_mode=None,
-                       atmos_params=None, pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+                       atmos_params=None, pressure_scaling="fixed", co2_scaling="mixing_ratio",
+                       x_fe=None):
     """(build_key, signature) calculate_veg will compile for this planet.
 
     Lets run_model.py tell whether a sweep needs a compile before starting
@@ -254,7 +272,7 @@ def build_requirements(mass_ratio, resolution="T21", atmos_type=None, physics_mo
     atmos_type = resolve_atmos_type(atmos_type or ATMOS_TYPE)
     physics_mode = resolve_physics_mode(physics_mode or PHYSICS_MODE)
     params, _ = base_atmosphere(mass_ratio, atmos_type, atmos_params,
-                                pressure_scaling, co2_scaling)
+                                pressure_scaling, co2_scaling, x_fe)
     p_surf = total_pressure_bar(params)
     key = build_key(resolution, model_layers(p_surf, default=NLAYERS), NCPUS)
     signature = build_signature(
@@ -266,14 +284,16 @@ def build_requirements(mass_ratio, resolution="T21", atmos_type=None, physics_mo
 
 
 def planet_timestep(gravity, attempt=0, p_surf_bar=1.0):
-    """PlaSim timestep [min], scaled with g and P, halved on each crash retry.
+    """PlaSim timestep [min], scaled by the stricter of g and P, halved on each retry.
 
-    The floor is MIN_TIMESTEP_MIN unless the pressure factor alone asks for
-    less (thick columns start at THICK_TIMESTEP_MIN).
+    The smaller factor is used rather than the product: low-mass planets with
+    mass-scaled pressure (0.1-0.5 bar) already run stably at their g-scaled
+    step. The floor is MIN_TIMESTEP_MIN unless the pressure factor alone asks
+    for less (thick columns start at THICK_TIMESTEP_MIN).
     """
     g_factor = min(1.0, gravity / G_EARTH)
     p_factor = timestep_pressure_factor(p_surf_bar)
-    dt = BASE_TIMESTEP_MIN * g_factor * p_factor / (2 ** attempt)
+    dt = BASE_TIMESTEP_MIN * min(g_factor, p_factor) / (2 ** attempt)
     floor = min(MIN_TIMESTEP_MIN, BASE_TIMESTEP_MIN * p_factor)
     return snap_timestep_min(dt, floor=floor)
 
@@ -292,8 +312,9 @@ def planet_configure_extras(atmos_type, configure_kwargs=None):
     extras.setdefault("synchronous", False)
     return extras
 
-def cmf_noack():
-    return (X_fe - X_fe_m)/(1-X_fe_m)
+def cmf_noack(x_fe=None):
+    """Noack & Lasbleis (2020) Eq. 8: pure-iron core mass fraction."""
+    return (resolve_x_fe(x_fe) - X_fe_m)/(1-X_fe_m)
 
 def core_radius_noack(m_p, cmf):
     return 1000*(4850*(cmf**0.328)*(m_p)**0.266)
@@ -304,7 +325,7 @@ def core_density_noack(m_p, cmf, r_c):
 def core_mass_noack(r_c, rho_c):
     return (4/3)*np.pi*(r_c**3)*rho_c
 
-def try_run_planet(planet, years):
+def try_run_planet(planet, years, time_limit_s=None):
     # Serialize planet into base64 string for passing via stdin
     data = pickle.dumps(planet)
     b64 = base64.b64encode(data).decode()
@@ -327,21 +348,33 @@ planet.run(years=1, postprocess=True, clean=False)
 print(base64.b64encode(pickle.dumps(planet)).decode())
 """
 
-    proc = subprocess.run(
+    # Own session, so a timeout can kill mpiexec and every MPI rank with it.
+    proc = subprocess.Popen(
         [sys.executable, "-c", code],
-        input=b64.encode(),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = proc.communicate(b64.encode(), timeout=time_limit_s)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        print(f"[try_run_planet] killed after {time_limit_s / 60:.1f} min time limit")
+        return TIMED_OUT
 
     # Crash case (SIGILL, segfault, etc)
     if proc.returncode != 0:
         print(f"[try_run_planet] subprocess exited with code {proc.returncode}")
-        if proc.stderr:
-            print("STDERR (tail):\n", proc.stderr.decode()[-2000:])
+        if stderr:
+            print("STDERR (tail):\n", stderr.decode()[-2000:])
         return 0
 
-    out_b64 = proc.stdout.decode().strip()
+    out_b64 = stdout.decode().strip()
     return pickle.loads(base64.b64decode(out_b64))
 
 
@@ -493,7 +526,7 @@ def extract_gpp_diagnostics(
     if missing:
         raise RuntimeError(f"missing inspect fields for GPP diagnostics: {missing}")
 
-    return summarize_from_fields(
+    record = summarize_from_fields(
         gpp=fields["gpp"],
         gppl=fields["gppl"],
         gppw=fields["gppw"],
@@ -517,6 +550,15 @@ def extract_gpp_diagnostics(
         tot_gpp=tot_gpp,
         physics_mode=physics_mode,
     )
+    lat = _inspect_first(planet, ["lat"])
+    if lat is not None:
+        land = land_mask_from_lsm(lsm)
+        _, _, area_gpp, planet_gpp = land_gpp_summary(fields["gpp"], lsm, lat, radius)
+        record["area_gpp"] = area_gpp
+        record["planet_gpp_pgc_yr"] = planet_gpp
+        record["ts_global_C"] = area_mean(fields["ts"], lat) - 273.15
+        record["ts_land_area_C"] = area_mean(fields["ts"], lat, land) - 273.15
+    return record
 
 
 def calculate_veg(
@@ -532,8 +574,9 @@ def calculate_veg(
     configure_kwargs=None,
     pressure_scaling="fixed",
     co2_scaling="mixing_ratio",
+    x_fe=None,
 ):
-    bulk = planet_bulk(mass_ratio)
+    bulk = planet_bulk(mass_ratio, x_fe)
     r_new = bulk["radius"]
     g_new = bulk["gravity"]
     light = planet_starlight(mstar, au)
@@ -545,7 +588,7 @@ def calculate_veg(
     # flux = min(flux, 2000)
 
     local_params, preset = base_atmosphere(
-        mass_ratio, atmos_type, atmos_params, pressure_scaling, co2_scaling,
+        mass_ratio, atmos_type, atmos_params, pressure_scaling, co2_scaling, x_fe,
     )
 
     local_params['gravity'] = g_new
@@ -555,7 +598,7 @@ def calculate_veg(
     local_params.update(planet_configure_extras(atmos_type, configure_kwargs))
     
     if preset["apply_hhe"]:
-        CMF = cmf_noack()
+        CMF = cmf_noack(x_fe)
         r_c = core_radius_noack(mass_ratio, CMF)
         rhoc = core_density_noack(mass_ratio, CMF, r_c)
         m_c = core_mass_noack(r_c, rhoc)/mass_ratio
@@ -635,6 +678,8 @@ def calculate_veg(
     # a smaller timestep. If every attempt crashes, the GPP entries are None so the
     # caller can tell a genuine crash apart from a real zero-vegetation result.
     planet = None
+    timed_out = False
+    deadline = time.monotonic() + RUN_TIME_LIMIT_MIN * 60 if RUN_TIME_LIMIT_MIN > 0 else None
     for attempt in range(MAX_RETRIES + 1):
         # Halve the timestep on each retry (down to the floor); a finer step is a
         # more deterministic stability fix than reseeding alone.
@@ -677,7 +722,8 @@ def calculate_veg(
 
         planet.configure(**local_params)
         air_ppmv = co2_ppmv_from_params(local_params)
-        planet._edit_namelist("vegmod_namelist", "CO2VEG", str(plant_co2_ppmv(air_ppmv)))
+        plant_ppmv = plant_co2_ppmv(air_ppmv, total_pressure_bar(local_params))
+        planet._edit_namelist("vegmod_namelist", "CO2VEG", str(plant_ppmv))
         planet._edit_namelist("vegmod_namelist", "CO2VEG_MAX", str(CO2VEG_MAX))
         planet._edit_namelist("vegmod_namelist", "T_HOT", str(T_HOT_C))
         planet._edit_namelist("vegmod_namelist", "T_KILL", str(T_KILL_C))
@@ -688,7 +734,14 @@ def calculate_veg(
         planet._edit_namelist("plasim_namelist", "SEED", str(seed))
         planet.exportcfg()
 
-        planet = try_run_planet(planet, N_YEARS)
+        remaining = None if deadline is None else max(deadline - time.monotonic(), 1.0)
+        planet = try_run_planet(planet, N_YEARS, remaining)
+        if planet is TIMED_OUT:
+            timed_out = True
+            planet = None
+            print(f"[calculate_veg] time limit ({RUN_TIME_LIMIT_MIN:g} min) reached "
+                  f"(mass={mass_ratio}, P={p_surf:.3g} bar); recording as crashed, no retry")
+            break
 
         if planet != 0 and planet is not None:
             break  # success
@@ -706,7 +759,7 @@ def calculate_veg(
         # Mix / column knobs still go on the record so diagnostic plots can
         # compare P, plant CO2, β, and the vertical-grid settings.
         if diagnostics:
-            return base_record(
+            record = base_record(
                 mass_ratio=mass_ratio,
                 mstar=mstar,
                 au=au,
@@ -719,6 +772,8 @@ def calculate_veg(
                 startemp=startemp,
                 params=local_params,
             )
+            record["timed_out"] = timed_out
+            return record
         return [None, None, None, None]
 
     veg = planet.inspect("veggpp", tavg=True)
@@ -748,7 +803,7 @@ def calculate_veg(
 
 def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_type,
                     physics_mode=None, atmos_params=None, configure_kwargs=None,
-                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio", x_fe=None):
     """Worker entry for the GPP-term diagnostic (isolated process, like `_grid_point`)."""
     return calculate_veg(
         mass_ratio,
@@ -763,19 +818,20 @@ def diag_grid_point(mass_ratio, mstar, au, resolution, workdir_suffix, atmos_typ
         configure_kwargs=configure_kwargs,
         pressure_scaling=pressure_scaling,
         co2_scaling=co2_scaling,
+        x_fe=x_fe,
     )
 
 
 def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
                 atmos_type, physics_mode, atmos_params, configure_kwargs=None,
-                pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+                pressure_scaling="fixed", co2_scaling="mixing_ratio", x_fe=None):
     """Compute a single grid point. Runs inside a worker process for isolation
     (ExoPlaSim uses process-wide os.chdir, so concurrency must be process-based)."""
     veg_amt = calculate_veg(
         mass_ratio, mstar, au, resolution, workdir_suffix,
         atmos_type=atmos_type, physics_mode=physics_mode, atmos_params=atmos_params,
         configure_kwargs=configure_kwargs,
-        pressure_scaling=pressure_scaling, co2_scaling=co2_scaling,
+        pressure_scaling=pressure_scaling, co2_scaling=co2_scaling, x_fe=x_fe,
     )
     flux = stellar_mass_to_temp_flux(mstar, au)
     # [avg, tot, startemp, flux, area_avg, planet_total]: the area metrics go
@@ -789,7 +845,7 @@ def _grid_point(mass_ratio, mstar, au, resolution, workdir_suffix,
 def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_file=None,
               atmos_type=None, physics_mode=None, atmos_params=None,
               configure_kwargs=None, pressure_scaling="fixed", co2_scaling="mixing_ratio",
-              workdir_tag=""):
+              workdir_tag="", x_fe=None):
     """Evaluate one planet mass over a set of (stellar mass, semi-major axis) points.
 
     points        : explicit list of (mstar, au) tuples to evaluate. If None
@@ -804,6 +860,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
     atmos_params  : optional partial-pressure overrides on the preset.
     configure_kwargs : extra exo.Model.configure() kwargs (ozone, rotationperiod, …).
     pressure_scaling, co2_scaling : see atmos_presets.PRESSURE_SCALINGS / CO2_SCALINGS.
+    x_fe          : bulk iron weight fraction (None = Earth-like X_FE_EARTH).
     workdir_tag   : prefix on the ExoPlaSim workdir, so a run that shares a
                     sweep point's settings (the Earth reference) keeps its own output.
 
@@ -838,7 +895,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             continue
         workdir_suffix = grid_workdir_suffix(
             mass_ratio, ms, au_key, atmos_type, physics_mode, resolution,
-            pressure_scaling, co2_scaling, tag=workdir_tag,
+            pressure_scaling, co2_scaling, tag=workdir_tag, x_fe=x_fe,
         )
         tasks.append((ms, au_key, mstar, au, workdir_suffix))
 
@@ -858,7 +915,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
         _save(ms, au_key, _grid_point(
             mass_ratio, mstar, au, resolution, workdir_suffix,
             atmos_type, physics_mode, atmos_params, configure_kwargs,
-            pressure_scaling, co2_scaling,
+            pressure_scaling, co2_scaling, x_fe,
         ))
     except Exception as e:
         print(f"Error! ({ms}, {au_key}): {e}")
@@ -873,7 +930,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
                 _save(ms, au_key, _grid_point(
                     mass_ratio, mstar, au, resolution, workdir_suffix,
                     atmos_type, physics_mode, atmos_params, configure_kwargs,
-                    pressure_scaling, co2_scaling,
+                    pressure_scaling, co2_scaling, x_fe,
                 ))
             except Exception as e:
                 print(f"Error! ({ms}, {au_key}): {e}")
@@ -885,7 +942,7 @@ def model_fun(mass_ratio, resolution="T21", points=None, file_tag="", output_fil
             pool.submit(
                 _grid_point, mass_ratio, mstar, au, resolution, workdir_suffix,
                 atmos_type, physics_mode, atmos_params, configure_kwargs,
-                pressure_scaling, co2_scaling,
+                pressure_scaling, co2_scaling, x_fe,
             ): (ms, au_key)
             for ms, au_key, mstar, au, workdir_suffix in remaining
         }

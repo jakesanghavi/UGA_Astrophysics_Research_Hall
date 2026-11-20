@@ -3,6 +3,13 @@
 
 Default: n2 (Earth air) × 3 masses at 1 Msun / 1 AU, one year.
 See ATMOSPHERES.md for presets (including venus_surface / mars_surface).
+
+--axis pressure holds one planet mass and scales every gas in the preset by
+the same factor, so surface pressure changes and every mixing ratio (CO2 ppm
+included) stays fixed:
+
+    python run_gpp_diagnostics.py --axis pressure --atmos n2 --masses 1 \
+        --pressures 0.25,0.5,1,2,3,5 --years 3 --output pressure_sweep.json
 """
 
 from __future__ import annotations
@@ -13,14 +20,28 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from atmos_presets import ATMOS_TYPES, resolve_atmos_type, resolve_physics_mode
+from atmos_presets import (
+    ATMOS_TYPES,
+    default_physics_mode,
+    GAS_KEYS,
+    PRESETS,
+    iron_tag,
+    resolve_x_fe,
+    resolve_atmos_type,
+    resolve_physics_mode,
+    total_pressure_bar,
+)
 from veg_utils import calc_hz_percentiles
 
 DEFAULT_MASSES = [0.25, 1.0, 2.0]
 DEFAULT_MSTAR = 1.0
 DEFAULT_AU = 1.0
 DEFAULT_YEARS = 1
+DEFAULT_MAX_MINUTES = 20.0
 DEFAULT_OUTPUT = "gpp_diag.json"
+# 0.1 bar at full Earth gravity crashes and retries at a smaller timestep,
+# which stalls a sweep; 0.25 bar is the default floor.
+DEFAULT_PRESSURES = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0]
 
 
 def parse_float_list(text):
@@ -67,17 +88,35 @@ def parse_physics_spec(text):
     return mapping
 
 
+def pressure_overrides(atmos, p_target_bar):
+    """Preset partial pressures scaled to sum to p_target_bar; mixing ratios unchanged."""
+    gases = PRESETS[resolve_atmos_type(atmos)]["gases"]
+    factor = float(p_target_bar) / total_pressure_bar(gases)
+    return {key: float(gases[key] or 0.0) * factor for key in GAS_KEYS if key in gases}
+
+
 def physics_for(atmos, spec):
+    """Explicit mode or per-atmos map; otherwise the mix's default (other for CO2 air)."""
     if isinstance(spec, dict):
-        return spec.get(atmos, "earth")
-    return spec or "earth"
+        return spec.get(atmos, default_physics_mode(atmos))
+    return spec or default_physics_mode(atmos)
 
 
 def build_tasks(args):
-    """Return (atmos, mass, mstar, au, physics) tuples for the requested tiny grid."""
+    """Return (atmos, mass, mstar, au, physics, pressure) tuples for the tiny grid.
+
+    pressure is None except on --axis pressure.
+    """
     atmos_types = args.atmos
     masses = args.masses
-    if args.axis == "mass":
+    pressures = [None]
+    if args.axis == "pressure":
+        points = [(args.mstar, args.au)]
+        if len(args.masses) != 1:
+            print(f"note: --axis pressure uses one planet mass; taking {args.masses[0]:g}")
+        masses = [args.masses[0]]
+        pressures = args.pressures
+    elif args.axis == "mass":
         points = [(args.mstar, args.au)]
         masses = args.masses
     elif args.axis == "au":
@@ -102,12 +141,16 @@ def build_tasks(args):
         physics = physics_for(atmos, args.physics)
         for mass in masses:
             for mstar, au in points:
-                tasks.append((atmos, mass, mstar, au, physics))
+                for pressure in pressures:
+                    tasks.append((atmos, mass, mstar, au, physics, pressure))
     return tasks
 
 
-def record_key(atmos, mass, mstar, au, physics="earth"):
-    return f"{atmos}|{mass}|{mstar}|{au}|{physics}"
+def record_key(atmos, mass, mstar, au, physics="earth", pressure=None):
+    key = f"{atmos}|{mass}|{mstar}|{au}|{physics}"
+    if pressure is not None:
+        key += f"|p{float(pressure):g}"
+    return key
 
 
 def load_existing(path):
@@ -130,6 +173,7 @@ def index_records(records):
             rec["mstar"],
             rec["au"],
             rec.get("physics") or "earth",
+            rec.get("p_target_bar"),
         ): rec
         for rec in records
         if rec.get("atmos") is not None
@@ -149,10 +193,14 @@ def save_bundle(path, args, records):
         handle.write("\n")
 
 
-def workdir_suffix(atmos, mass, mstar, au, physics):
+def workdir_suffix(atmos, mass, mstar, au, physics, pressure=None, x_fe=None):
     def safe(value):
         return str(value).replace(".", "p").replace("-", "m")
-    return f"_diag_{atmos}_{physics}_{safe(mass)}_{safe(mstar)}_{safe(au)}"
+    suffix = f"_diag_{atmos}_{physics}_{safe(mass)}_{safe(mstar)}_{safe(au)}"
+    suffix += iron_tag(x_fe)
+    if pressure is not None:
+        suffix += f"_P{safe(float(pressure))}"
+    return suffix
 
 
 def parse_args(argv=None):
@@ -166,8 +214,9 @@ def parse_args(argv=None):
     parser.add_argument(
         "--physics",
         type=parse_physics_spec,
-        default="earth",
-        help="earth|mars|other, or per-atmos map n2=earth,co2=other (default: earth)",
+        default=None,
+        help="earth|mars|other, or per-atmos map n2=earth,co2=other "
+             "(default: earth for n2, other for CO2 mixes)",
     )
     parser.add_argument(
         "--masses",
@@ -200,13 +249,25 @@ def parse_args(argv=None):
         help="AU values for --axis au when --hz is not set",
     )
     parser.add_argument(
+        "--x-fe",
+        type=float,
+        default=None,
+        help="bulk iron weight fraction, 0.15-0.8 (default: Earth-like 0.35)",
+    )
+    parser.add_argument(
+        "--pressures",
+        type=parse_float_list,
+        default=DEFAULT_PRESSURES,
+        help="surface pressures in bar for --axis pressure (default: 0.25,0.5,1,2,3,5)",
+    )
+    parser.add_argument(
         "--hz",
         action="store_true",
         help="with --axis au, use the three HZ percentiles of --mstar",
     )
     parser.add_argument(
         "--axis",
-        choices=("mass", "au", "mstar"),
+        choices=("mass", "au", "mstar", "pressure"),
         default="mass",
         help="which coordinate to scan (default: mass at 1 Msun / 1 AU)",
     )
@@ -215,6 +276,13 @@ def parse_args(argv=None):
         type=int,
         default=DEFAULT_YEARS,
         help="ExoPlaSim years per point (default: 1, not the production N_YEARS)",
+    )
+    parser.add_argument(
+        "--max-minutes",
+        type=float,
+        default=DEFAULT_MAX_MINUTES,
+        help="wall-clock limit per point across retries; the run is killed and "
+             "recorded as timed out (default: 20, 0 = no limit)",
     )
     parser.add_argument(
         "--output",
@@ -276,23 +344,29 @@ def print_plan(tasks, args):
     else:
         print(f"GPP diagnostic: {len(tasks)} ExoPlaSim run(s), {args.years} year(s) each")
     print(f"  axis={args.axis}  atmos={args.atmos}  physics={args.physics}")
-    print("  (atmos, physics, mass, M*, AU)")
-    for atmos, mass, mstar, au, physics in tasks:
-        print(f"    {atmos:16s}  {physics:5s}  {mass:g}  {mstar:g}  {au:g}")
+    print("  (atmos, physics, mass, M*, AU, P bar)")
+    for atmos, mass, mstar, au, physics, pressure in tasks:
+        p_text = "preset" if pressure is None else f"{pressure:g}"
+        print(f"    {atmos:16s}  {physics:5s}  {mass:g}  {mstar:g}  {au:g}  {p_text}")
     print(f"  output: {args.output}")
     print("This is a diagnostic grid, not the production sweep.")
 
 
 def run_tasks(tasks, args):
+    # Worker processes re-import model_helpers, so they read these from the
+    # environment rather than from attributes set here.
+    os.environ["EXOPLASIM_N_YEARS"] = str(args.years)
+    os.environ["EXOPLASIM_RUN_TIME_LIMIT_MIN"] = str(args.max_minutes)
     # Imported here so --dry-run does not need ExoPlaSim installed.
     import model_helpers as mh
 
     mh.N_YEARS = args.years
+    mh.RUN_TIME_LIMIT_MIN = args.max_minutes
     records = [] if args.force else load_existing(args.output)
     by_key = index_records(records)
     pending = []
-    for atmos, mass, mstar, au, physics in tasks:
-        key = record_key(atmos, mass, mstar, au, physics)
+    for atmos, mass, mstar, au, physics, pressure in tasks:
+        key = record_key(atmos, mass, mstar, au, physics, pressure)
         existing = by_key.get(key)
         if (
             not args.force
@@ -301,22 +375,30 @@ def run_tasks(tasks, args):
             and existing.get("gpp") is not None
         ):
             continue
-        pending.append(
-            (atmos, mass, mstar, au, physics, workdir_suffix(atmos, mass, mstar, au, physics))
-        )
+        overrides = None if pressure is None else pressure_overrides(atmos, pressure)
+        pending.append((
+            atmos, mass, mstar, au, physics, pressure, overrides,
+            workdir_suffix(atmos, mass, mstar, au, physics, pressure, args.x_fe),
+        ))
 
     if not pending:
         print("Nothing to run (all points already present).")
         save_bundle(args.output, args, list(by_key.values()))
         return
 
-    def store(record):
+    x_fe = resolve_x_fe(args.x_fe)
+
+    def store(record, pressure):
+        record["x_fe"] = x_fe
+        if pressure is not None:
+            record["p_target_bar"] = float(pressure)
         key = record_key(
             record["atmos"],
             record["mass_ratio"],
             record["mstar"],
             record["au"],
             record.get("physics") or "earth",
+            pressure,
         )
         by_key[key] = record
         save_bundle(args.output, args, list(by_key.values()))
@@ -327,42 +409,55 @@ def run_tasks(tasks, args):
         print(
             f"  {record['atmos']:8s} physics={record.get('physics', 'earth'):5s} "
             f"M={record['mass_ratio']:g} "
-            f"M*={record['mstar']:g} AU={record['au']:g}  "
-            f"{'CRASH' if crashed else f'GPP={gpp}  beta={beta}  light_frac={frac}'}"
+            f"M*={record['mstar']:g} AU={record['au']:g} P={record.get('p_total_bar')}  "
+            f"{('TIMED OUT' if record.get('timed_out') else 'CRASH') if crashed else f'GPP={gpp}  beta={beta}  light_frac={frac}'}"
         )
 
     workers = mh.WORKERS
-    first = pending[0]
-    rest = pending[1:]
-    print(f"Running {len(pending)} point(s) with N_YEARS={mh.N_YEARS}, WORKERS={workers}")
-    store(mh.diag_grid_point(
-        first[1], first[2], first[3], mh.RESOLUTION, first[5], first[0],
-        physics_mode=first[4],
-    ))
+    print(f"Running {len(pending)} point(s) with N_YEARS={mh.N_YEARS}, WORKERS={workers}, "
+          f"limit={args.max_minutes:g} min/point")
+    # A point that needs a PlaSim compile runs alone first so workers never
+    # compile at once; otherwise every point starts in the pool.
+    unbuilt = [
+        task for task in pending
+        if mh.needs_recompile(*mh.build_requirements(
+            task[1], mh.RESOLUTION, task[0], task[4], task[6], x_fe=x_fe))
+    ]
+    rest = list(pending)
+    if unbuilt:
+        first = unbuilt[0]
+        rest.remove(first)
+        atmos, mass, mstar, au, physics, pressure, overrides, suffix = first
+        store(mh.diag_grid_point(
+            mass, mstar, au, mh.RESOLUTION, suffix, atmos,
+            physics_mode=physics, atmos_params=overrides, x_fe=x_fe,
+        ), pressure)
 
     if not rest:
         return
 
     if workers <= 1:
-        for atmos, mass, mstar, au, physics, suffix in rest:
+        for atmos, mass, mstar, au, physics, pressure, overrides, suffix in rest:
             store(mh.diag_grid_point(
-                mass, mstar, au, mh.RESOLUTION, suffix, atmos, physics_mode=physics,
-            ))
+                mass, mstar, au, mh.RESOLUTION, suffix, atmos,
+                physics_mode=physics, atmos_params=overrides, x_fe=x_fe,
+            ), pressure)
         return
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
         future_map = {
             pool.submit(
-                mh.diag_grid_point, mass, mstar, au, mh.RESOLUTION, suffix, atmos, physics
-            ): (atmos, mass, mstar, au, physics)
-            for atmos, mass, mstar, au, physics, suffix in rest
+                mh.diag_grid_point, mass, mstar, au, mh.RESOLUTION, suffix, atmos,
+                physics, overrides, None, "fixed", "mixing_ratio", x_fe,
+            ): (atmos, mass, mstar, au, physics, pressure)
+            for atmos, mass, mstar, au, physics, pressure, overrides, suffix in rest
         }
         for fut in as_completed(future_map):
-            atmos, mass, mstar, au, physics = future_map[fut]
+            atmos, mass, mstar, au, physics, pressure = future_map[fut]
             try:
-                store(fut.result())
+                store(fut.result(), pressure)
             except Exception as exc:
-                print(f"Error! ({atmos}, {physics}, {mass}, {mstar}, {au}): {exc}")
+                print(f"Error! ({atmos}, {physics}, {mass}, {mstar}, {au}, P={pressure}): {exc}")
 
 
 def write_preset_only(tasks, args):
@@ -370,7 +465,7 @@ def write_preset_only(tasks, args):
     from gpp_terms import preset_only_record
 
     records = []
-    for atmos, mass, mstar, au, physics in tasks:
+    for atmos, mass, mstar, au, physics, _pressure in tasks:
         rec = preset_only_record(
             mass_ratio=mass, mstar=mstar, au=au,
             atmos_type=atmos, physics_mode=physics,

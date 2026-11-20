@@ -4,6 +4,7 @@ Composition (`atmos_type`) and thermodynamics (`physics_mode`) are separate.
 See ATMOSPHERES.md.
 """
 
+import math
 import os
 import re
 
@@ -250,7 +251,7 @@ def resolve_run_config(raw, default_run_mode="normal"):
 
     `raw` is an atmos name or a dict with at least `atmos_type`. Optional keys:
     `run_mode`, `physics_mode`, `atmos_params`, `ozone`, `pressure_scaling`,
-    `co2_scaling`, plus
+    `co2_scaling`, `x_fe` (bulk iron fraction, default Earth-like), plus
     CONFIGURE_OPTIONAL_KEYS, or `extras` for any other configure() kwargs.
     """
     if isinstance(raw, str):
@@ -278,6 +279,7 @@ def resolve_run_config(raw, default_run_mode="normal"):
         "ozone": bool(ozone),
         "pressure_scaling": resolve_pressure_scaling(raw.get("pressure_scaling", "fixed")),
         "co2_scaling": resolve_co2_scaling(raw.get("co2_scaling", "mixing_ratio")),
+        "x_fe": resolve_x_fe(raw.get("x_fe")),
         "extras": extras,
     }
 
@@ -320,11 +322,20 @@ EARTH_MODELTOP_MBAR = 50.0
 COLUMN_NEAR_EARTH_BAR = (0.1, 2.0)
 # ExoPlaSim guidance: P < 0.1 bar or P > 10 bar often needs ~5 min steps.
 TIMESTEP_P_THIN_BAR = 0.1
+# Outside this range: no pressure broadening, extra filtering, 8-byte
+# precision. Paradise et al. (2020) run PlaSim to 10 bar of N2 with
+# broadening on, so the upper end matches theirs.
+EXTREME_P_BAR = (0.05, 10.0)
+# Pressures that keep the gravity-scaled step unchanged.
+# Above the upper end the factor is (3 / P)^2: N2 air at 1 M_earth crashed
+# in mkstress at 45 min for 5 bar and at 10 min for 7 and 9 bar; 15 min
+# (5 bar) and 5 min (7, 9 bar) ran a full year. 3 bar runs at 45 min.
+TIMESTEP_P_NEAR_EARTH_BAR = (0.5, 3.0)
 TIMESTEP_P_THICK_BAR = 10.0
 # Values that divide a 1440-minute day.
 TIMESTEP_NICE_MIN = (45.0, 30.0, 15.0, 10.0, 5.0, 3.0, 1.5)
 # Snap up to a nice value up to 10% above the target, so 1 M_earth
-# (g = 9.62 from the Noack radius) keeps 45 min instead of dropping to 30.
+# (g = 9.78 from the Noack radius) keeps 45 min instead of dropping to 30.
 TIMESTEP_SNAP_TOL = 1.1
 
 # Thick columns (> TIMESTEP_P_THICK_BAR) follow the LMD Venus GCM
@@ -372,7 +383,7 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     if lo <= p_bar <= hi:
         return {}
     p_mbar = p_bar * 1000.0
-    extreme = p_bar < 0.05 or p_bar > 5.0
+    extreme = p_bar < EXTREME_P_BAR[0] or p_bar > EXTREME_P_BAR[1]
     thin = p_bar < lo
     if thin:
         modeltop = min(p_mbar * (EARTH_MODELTOP_MBAR / EARTH_SURFACE_MBAR), 0.5 * p_mbar)
@@ -387,7 +398,10 @@ def column_setup(p_surf_bar, p_h2o_bar=None):
     }
     if extreme:
         cfg["physicsfilter"] = "gp|exp|sp"
-    if p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
+    # Dry surface columns (Venus / Mars surface) drop the water cycle. A dry
+    # mix between 0.05 and 10 bar keeps it, so a pressure sweep of one mix
+    # does not switch hydrology on and off partway through.
+    if extreme and p_h2o_bar is not None and float(p_h2o_bar) <= 0.0:
         cfg["drycore"] = True
     if p_bar > TIMESTEP_P_THICK_BAR:
         cfg["otherargs"] = dict(THICK_COLUMN_NAMELIST)
@@ -404,19 +418,24 @@ def model_layers(p_surf_bar, default=10):
 def timestep_pressure_factor(p_surf_bar):
     """Scale Earth 45 min steps down away from ~1 bar.
 
-    Identity between 0.5 and 2 bar. At 6.36 mbar this is 5/45 (a 5 min
-    first attempt before gravity and retries). Above TIMESTEP_P_THICK_BAR
-    it is THICK_TIMESTEP_MIN / 45.
+    Identity between 0.5 and 3 bar. Below 0.5 bar it is sqrt(P / 0.5):
+    30 min at 0.25 bar, where Earth gravity crashed at 45 min. At 6.36 mbar
+    it is 5/45 (a 5 min first attempt before retries). From 3 to 10 bar it
+    is (3 / P)^2, floored at 5/45: 15 min at 5 bar, 5 min at 7 and 9 bar.
+    Above TIMESTEP_P_THICK_BAR it is THICK_TIMESTEP_MIN / 45.
     """
     p_bar = float(p_surf_bar)
     if p_bar <= 0.0:
         raise ValueError("surface pressure must be positive")
-    lo, hi = COLUMN_NEAR_EARTH_BAR
+    lo, hi = TIMESTEP_P_NEAR_EARTH_BAR
     if lo <= p_bar <= hi:
         return 1.0
     if p_bar > TIMESTEP_P_THICK_BAR:
         return THICK_TIMESTEP_MIN / 45.0
-    raw = min(1.0, p_bar / TIMESTEP_P_THIN_BAR, TIMESTEP_P_THICK_BAR / p_bar)
+    if p_bar > hi:
+        raw = (hi / p_bar) ** 2
+    else:
+        raw = min(1.0, math.sqrt(p_bar / lo), p_bar / TIMESTEP_P_THIN_BAR)
     if raw >= 1.0:
         return 1.0
     return max(5.0 / 45.0, raw)
@@ -434,7 +453,7 @@ def snap_timestep_min(minutes, floor=3.0, tol=TIMESTEP_SNAP_TOL):
 def model_precision(p_surf_bar, default=4):
     """4-byte is the usual default; 8-byte for very thick/thin columns."""
     p_bar = float(p_surf_bar)
-    if p_bar < 0.05 or p_bar > 5.0:
+    if p_bar < EXTREME_P_BAR[0] or p_bar > EXTREME_P_BAR[1]:
         return max(8, int(default))
     return int(default)
 
@@ -525,7 +544,8 @@ WORKDIR_PREFIX = "custom_earthlike_model"
 
 
 def grid_workdir_suffix(mass, mstar, au, atmos_type, physics_mode, resolution="T21",
-                        pressure_scaling="fixed", co2_scaling="mixing_ratio", tag=""):
+                        pressure_scaling="fixed", co2_scaling="mixing_ratio", tag="",
+                        x_fe=None):
     """Per-grid-point suffix of the ExoPlaSim workdir (`WORKDIR_PREFIX + suffix`).
 
     Unique per mass and scaling scenario because mass_only masses run
@@ -536,23 +556,47 @@ def grid_workdir_suffix(mass, mstar, au, atmos_type, physics_mode, resolution="T
     safe = f"{mstar}_{au}".replace(".", "p").replace("-", "m")
     res_tag = "" if resolution == "T21" else f"{resolution}_"
     return (f"{tag}{res_tag}{atmos_type}_{physics_mode}"
-            f"{scenario_tag(pressure_scaling, co2_scaling)}_"
+            f"{scenario_tag(pressure_scaling, co2_scaling)}{iron_tag(x_fe)}_"
             f"m{mass_file_token(mass)}_{safe}")
 
 
+# Noack & Lasbleis (2020) Earth-like bulk iron fraction (pure-iron core,
+# mantle iron number 0.1). Radius and mass-scaled pressure take x_fe.
+X_FE_EARTH = 0.35
+
+
+def resolve_x_fe(x_fe):
+    """Bulk iron weight fraction; None means Earth-like. Noack fit range 0.15-0.8."""
+    if x_fe is None:
+        return X_FE_EARTH
+    x_fe = float(x_fe)
+    if not 0.15 <= x_fe <= 0.8:
+        raise ValueError(f"x_fe {x_fe} outside Noack & Lasbleis range 0.15-0.8")
+    return x_fe
+
+
+def iron_tag(x_fe=None):
+    """`_xfe025` etc.; empty for the Earth-like default."""
+    x_fe = resolve_x_fe(x_fe)
+    if abs(x_fe - X_FE_EARTH) < 1e-9:
+        return ""
+    return "_xfe" + f"{x_fe:g}".replace(".", "")
+
+
 def regime_file_tag(run_mode, atmos_type, physics_mode,
-                    pressure_scaling="fixed", co2_scaling="mixing_ratio"):
+                    pressure_scaling="fixed", co2_scaling="mixing_ratio", x_fe=None):
     """Filename tag so composition/physics/scaling combos do not overwrite each other.
 
     `_<mode>_<atmos>`, plus `_<physics>` when physics is not earth, plus
-    scenario_tag() when the scaling is not fixed / mixing_ratio. `_massonly2`
-    is a legacy alias the parser still accepts.
+    scenario_tag() when the scaling is not fixed / mixing_ratio, plus
+    iron_tag() when x_fe is not Earth-like. `_massonly2` is a legacy alias the
+    parser still accepts.
     """
     atmos = resolve_atmos_type(atmos_type)
     physics = resolve_physics_mode(physics_mode)
     mode_tag = "_massonly" if run_mode == "mass_only" else "_normal"
     extra = f"_{atmos}" if physics == "earth" else f"_{atmos}_{physics}"
-    return mode_tag + extra + scenario_tag(pressure_scaling, co2_scaling)
+    return mode_tag + extra + scenario_tag(pressure_scaling, co2_scaling) + iron_tag(x_fe)
 
 
 SWEEP_JSON_PREFIX = "16cpus_test_"
@@ -593,7 +637,14 @@ def parse_regime_tag(tag):
     if tag in _LEGACY_TAGS:
         run_mode, atmos, physics = _LEGACY_TAGS[tag]
         return {"run_mode": run_mode, "atmos": atmos, "physics": physics,
-                "pressure_scaling": DEFAULT_SCENARIO[0], "co2_scaling": DEFAULT_SCENARIO[1]}
+                "pressure_scaling": DEFAULT_SCENARIO[0], "co2_scaling": DEFAULT_SCENARIO[1],
+                "x_fe": X_FE_EARTH}
+    x_fe = X_FE_EARTH
+    iron = re.search(r"_xfe(\d+)$", tag)
+    if iron:
+        digits = iron.group(1)
+        x_fe = float(digits[0] + "." + digits[1:]) if len(digits) > 1 else float(digits)
+        tag = tag[:iron.start()]
     pressure_scaling, co2_scaling = DEFAULT_SCENARIO
     scen = re.search(r"_(pfix|pmass)_(co2mix|co2pp|co2area)$", tag)
     if scen:
@@ -629,7 +680,8 @@ def parse_regime_tag(tag):
     except ValueError:
         return None
     return {"run_mode": run_mode, "atmos": atmos, "physics": physics,
-            "pressure_scaling": pressure_scaling, "co2_scaling": co2_scaling}
+            "pressure_scaling": pressure_scaling, "co2_scaling": co2_scaling,
+            "x_fe": x_fe}
 
 
 def resolution_suffix(resolution):
